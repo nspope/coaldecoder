@@ -1,0 +1,7 @@
+useDynLib("coaldecoder", .registration=TRUE)
+import("nloptr")
+importFrom("Rcpp", "sourceCpp")
+importFrom("Rcpp", "evalCpp")
+importFrom(expm, expm)
+exportPattern("^[[:alpha:]]+")
+export(fit_model)

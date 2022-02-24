@@ -1,0 +1,14 @@
+Package: coaldecoder
+Type: Package
+Title: coaldecoder
+Version: 0.0.2
+Date: 2020-11-01
+Author: Nate Pope
+Maintainer: Nate Pope <nspope@utexas.edu>
+Description: Demographic inference from trio coalescence rates
+License: GPL (>= 2)
+Encoding: UTF-8
+LinkingTo: Rcpp, RcppArmadillo, nloptr (>= 1.2.0)
+Imports: expm, Rcpp, RcppArmadillo, nloptr (>= 1.2.0)
+Depends: R (>= 3.0.2)
+RoxygenNote: 6.0.1
