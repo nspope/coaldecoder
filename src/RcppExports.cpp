@@ -3,9 +3,13 @@
 
 #include <RcppArmadillo.h>
 #include <Rcpp.h>
-#include "expm.h"
 
 using namespace Rcpp;
+
+#ifdef RCPP_USE_GLOBAL_ROSTREAM
+Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
+Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
+#endif
 
 // test_matrix_exponential_multiply
 Rcpp::List test_matrix_exponential_multiply(arma::mat A, arma::mat B, double t, arma::mat g);
@@ -47,14 +51,7 @@ static const R_CallMethodDef CallEntries[] = {
     {NULL, NULL, 0}
 };
 
-//RcppExport void R_init_coaldecoder(DllInfo *dll) {
-//    R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
-//    R_useDynamicSymbols(dll, FALSE);
-//}
-
-//manually copied, blarg
-extern "C" void R_init_coaldecoder(DllInfo *dll) { 
+RcppExport void R_init_coaldecoder(DllInfo *dll) {
     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
-    expmatrix = (void (*) (double*, int, double*, precond_type)) R_GetCCallable("expm", "expm"); 
-} 
+}
