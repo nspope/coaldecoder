@@ -1,5 +1,3 @@
-#define ARMA_64BIT_WORD 1
-
 #include <RcppArmadillo.h> 
 #include <vector>
 #include "expm_revdiff.h"
