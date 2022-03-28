@@ -5,7 +5,3 @@ test_matrix_exponential_multiply <- function(A, B, t, g) {
     .Call(`_coaldecoder_test_matrix_exponential_multiply`, A, B, t, g)
 }
 
-test_coalescent_epoch <- function(states, n, y, remap, migr_mat, gradient) {
-    .Call(`_coaldecoder_test_coalescent_epoch`, states, n, y, remap, migr_mat, gradient)
-}
-
