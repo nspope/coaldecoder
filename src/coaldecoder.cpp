@@ -2,7 +2,6 @@
 
 #include <RcppArmadillo.h> 
 #include <vector>
-#include <nloptrAPI.h>
 #include "expm_revdiff.h"
 
 // [[Rcpp::export]]
@@ -410,577 +409,579 @@ struct penalized_migration_function
   }
 };
 
-struct coalescent_epoch
-{
-  transition_rate_matrix* rate_matrix;
-
-  unsigned P, I, num_trans, num_coal, num_start, num_emiss;
-  arma::umat c_map_e, s_mask_e, y;
-  arma::uvec z, remap;
-  arma::mat migr_mat, tran_probs, coal_probs, emiss_probs;
-  double duration, loglikelihood;
-  bool normalizing_constant = false;
-
-  matrix_exponential_multiply transition;
-
-  coalescent_epoch (arma::mat& states, arma::uvec& n, arma::umat& y_in, arma::uvec remap_in, arma::mat migr_mat_in, double duration_in, transition_rate_matrix* rate_matrix, bool simulate = false)
-    : rate_matrix (rate_matrix)
-    , P (rate_matrix->P) 
-    , I (rate_matrix->I)
-    , num_trans (rate_matrix->num_trans)
-    , num_coal (rate_matrix->num_coal)
-    , num_start (rate_matrix->num_start)
-    , num_emiss (rate_matrix->num_emiss)
-    , c_map_e (rate_matrix->c_map_e)
-    , s_mask_e (rate_matrix->s_mask_e)
-    , y (y_in)
-    , remap (remap_in)
-    , migr_mat (migr_mat_in)
-    , duration (duration_in)
-    , loglikelihood (0.)
-    , transition (arma::trans(rate_matrix->transition_rates(remap, migr_mat)), states, duration)
-  {
-    // loglikelihood of counts of coalescent events within window, with reduced emission and starting states
-    // update states (probabilities that uncoalesced lineages are in XXX configuration)
-
-    if(!(states.n_rows == num_trans + num_coal && states.n_cols == num_start)) Rcpp::stop("invalid states");
-    if(!(n.n_elem == num_start)) Rcpp::stop("invalid n");
-    if(!(y.n_rows == num_emiss && y.n_cols == num_start && arma::all(n - arma::trans(arma::sum(y,0)) >= 0))) Rcpp::stop("invalid y");
-
-    states = transition.result;
-    tran_probs = states.submat(arma::span(0, num_trans-1), arma::span::all);
-    coal_probs = states.submat(arma::span(num_trans, num_trans+num_coal-1), arma::span::all);
-    emiss_probs = arma::mat(num_emiss, states.n_cols, arma::fill::zeros);
-
-    for (unsigned i=0; i<num_coal; ++i)
-    {
-      for(unsigned j=0; j<num_start; ++j)
-      {
-        emiss_probs.at(c_map_e(i,j),j) += coal_probs.at(i,j);
-      }
-    }
-    arma::rowvec uncoal_probs = arma::ones<arma::rowvec>(num_start) - arma::sum(emiss_probs, 0);
-
-    // if requested simulate new data
-    if (simulate)
-    {
-      arma::imat y_sim (num_emiss+1, num_start);
-      arma::mat probs = arma::join_vert(emiss_probs, uncoal_probs);
-      for (unsigned i=0; i<num_start; ++i)
-      {
-        R::rmultinom(n.at(i), probs.colptr(i), num_emiss+1, y_sim.colptr(i));
-      }
-      y = arma::conv_to<arma::umat>::from(y_sim.head_rows(num_emiss));
-    }
-
-    // mask coalescent events that are not allowed for a given starting configuration
-    for (unsigned i=0; i<num_start; ++i)
-    {
-      unsigned drop = 0;
-      for (unsigned j=0; j<num_emiss; ++j)
-      {
-        if (s_mask_e.at(j,i))
-        {
-          drop += y.at(j,i);
-          y.at(j,i) = 0;
-        }
-      }
-      n.at(i) -= drop;
-      // TODO warning about modifying input data?
-    }
-    y_in = y; // modify input y, as is done for input n
-
-    // multinomial log-likelihood (missing data should be 0 in both n and y)
-    z = n - arma::trans(arma::sum(y,0)); //member
-    double lp = 0;
-    double constant = 0;
-    for (unsigned i=0; i<num_start; ++i)
-    {
-      unsigned nlp = 0;
-      double psum = 0.;
-      nlp += z.at(i);
-      psum += uncoal_probs.at(i);
-      lp += z.at(i)*log(uncoal_probs.at(i));
-      if (normalizing_constant) constant += -1. * ::Rf_lgammafn(1+z.at(i));
-      for (unsigned j=0; j<num_emiss; ++j)
-      {
-        if (s_mask_e.at(j,i) == 0)
-        {
-          nlp += y.at(j,i);
-          psum += emiss_probs.at(j,i);
-          lp += y.at(j,i)*log(emiss_probs.at(j,i));
-          if (normalizing_constant) constant += -1. * ::Rf_lgammafn(1+y.at(j,i));
-        }
-      }
-      //do I need to normalize to 1? eg will numerical errors cause total 
-      if (std::fabs(1. - psum) >= sqrt(arma::datum::eps)) Rcpp::Rcout << "fixme:state probability sum " << psum << "\n";
-      if (normalizing_constant) constant += 1. * ::Rf_lgammafn(1+nlp);
-    }
-    lp += constant;
-
-    // condition on not coalescing
-    //tran_probs.each_col([](arma::vec& x){ x /= arma::accu(x) ;});
-    tran_probs.each_row([&](arma::rowvec& x){ x /= uncoal_probs ;});
-    states.submat(arma::span(0, num_trans-1), arma::span::all) = tran_probs;
-    states.submat(arma::span(num_trans, num_trans+num_coal-1), arma::span::all).zeros();
-
-    // remaining lineages are uncoalesced lineages
-    n = z;
-
-    loglikelihood = lp; //member
-  }
-
-  arma::mat reverse_differentiate (arma::mat& d_states) 
-  {
-    // returns gradient of rate matrix with regard to multinomial loglikelihood
-    // updates gradient of state vectors with regard to multinomial loglikelihood
-
-    if(!(d_states.n_rows == num_trans + num_coal && d_states.n_cols == num_start)) Rcpp::stop("invalid d_states");
-
-    arma::rowvec uncoal_probs = arma::ones<arma::rowvec>(num_start) - arma::sum(emiss_probs, 0);
-
-    // conditional tran_probs --> unconditional tran_probs
-    arma::mat d_tran_probs = d_states.submat(arma::span(0, num_trans-1), arma::span::all); 
-    arma::rowvec d_uncoal_probs = -arma::sum(tran_probs % d_tran_probs, 0) / uncoal_probs;
-    for (unsigned i=0; i<d_tran_probs.n_rows; ++i)
-    {
-      for (unsigned j=0; j<d_tran_probs.n_cols; ++j)
-      {
-        d_tran_probs.at(i,j) = d_tran_probs.at(i,j) / uncoal_probs.at(j);
-      }
-    }
-
-    // loglikelihood --> emission probabilities
-    arma::mat d_emiss_probs = arma::zeros(arma::size(emiss_probs));
-    for (unsigned i=0; i<num_start; ++i)
-    {
-      for (unsigned j=0; j<num_emiss; ++j)
-      {
-        if (s_mask_e.at(j,i) == 0)
-        {
-          d_emiss_probs.at(j,i) += double(y.at(j,i))/emiss_probs.at(j,i);
-        }
-      }
-      d_uncoal_probs.at(i) += double(z.at(i))/uncoal_probs.at(i);
-    }
-    d_emiss_probs.each_row([&](arma::rowvec& x) { x -= d_uncoal_probs; });
-
-    // emission states --> coalescent states
-    arma::mat d_coal_probs = arma::zeros(num_coal, num_start); 
-    for (int i=int(num_coal)-1; i>=0; --i)
-    {
-      for (int j=int(num_start)-1; j>=0; --j)
-      {
-        d_coal_probs.at(i,j) += d_emiss_probs.at(c_map_e(i,j),j);
-      }
-    }
-
-    // transition/coalescent states --> all states
-    d_states.submat(arma::span(0, num_trans-1), arma::span::all) = d_tran_probs;
-    d_states.submat(arma::span(num_trans, num_trans+num_coal-1), arma::span::all) = d_coal_probs;
-
-    // current timepoint --> previous timepoint
-    arma::mat d_states_updated, d_rates;
-    transition.reverse_differentiate(d_rates, d_states_updated, d_states);
-    d_states = d_states_updated;
-
-    return rate_matrix->reverse_differentiate(arma::trans(d_rates), arma::trans(transition()), remap, migr_mat);
-  }
-};
-
-// [[Rcpp::export()]]
-Rcpp::List test_coalescent_epoch (arma::mat states, arma::uvec n, arma::umat y, arma::uvec remap, arma::mat migr_mat, arma::mat gradient)
-{
-  arma::mat new_states = states;
-  transition_rate_matrix rate_matrix (migr_mat.n_rows, 3, true);
-  double duration = 1.3;
-  coalescent_epoch epoch (new_states, n, y, remap, migr_mat, duration, &rate_matrix);
-  double ll = epoch.loglikelihood;
-  arma::mat grad = epoch.reverse_differentiate (gradient);
-
-  return Rcpp::List::create(
-      Rcpp::_["states"] = new_states, 
-      Rcpp::_["n"] = n, 
-      Rcpp::_["grad"] = grad,
-      Rcpp::_["gradient"] = gradient,
-      Rcpp::_["rates"] = arma::trans(epoch.transition()), 
-      Rcpp::_["ll"] = ll
-      );
-}
-
-struct decoder 
-{
-  transition_rate_matrix trans_mat;
-
-  decoder (const unsigned num_pop, const unsigned num_ind, const bool approx) : trans_mat(num_pop,num_ind,approx) {}
-
-  arma::umat transitory_states (void)
-  {
-    return trans_mat.t_states;
-  }
-
-  arma::umat coalescent_states (void)
-  {
-    return trans_mat.c_states;
-  }
-
-  arma::umat emission_classes (void)
-  {
-    // rows are starting states, columns are populations, values are haplotype counts
-    // these classes correspond to columns in data "y" / elements of "z"
-    // used in loglikelihood()
-
-    return trans_mat.s_states;
-  }
-
-  arma::umat emission_states (void)
-  {
-    // rows are emission types (types of pairwise coalescences), columns are first/second of pair, values are population indices
-    // these states correspond to rows in data "y" used in loglikelihood()
-
-    return trans_mat.e_states;
-  }
-
-  arma::umat map_coalescent_states_to_emission_states (void)
-  {
-    return trans_mat.c_map_e;
-  }
-
-  arma::uvec map_emission_classes_to_transitory_states (void)
-  {
-    return trans_mat.s_map_t;
-  }
-
-  std::string symbolic_transition_rates (const arma::uvec& remap)
-  {
-    return trans_mat.symbolic_transition_rates(remap);
-  }
-
-  arma::mat transition_probabilities (const arma::uvec& remap, const arma::mat& migr_mat, const double& duration)
-  {
-    unsigned dim = trans_mat.num_trans + trans_mat.num_coal;
-    arma::mat eye = arma::eye(dim, dim);
-    matrix_exponential_multiply transition (arma::trans(trans_mat.transition_rates(remap, migr_mat)), eye, duration);
-    return transition.result;
-  }
-
-  arma::mat transition_rates (const arma::uvec& remap, const arma::mat& migr_mat)
-  {
-    return trans_mat.transition_rates(remap, migr_mat);
-  }
-
-  arma::cube migration_function (const arma::cube& migr_mat, const arma::vec& duration)
-  {
-    unsigned T = duration.n_elem;
-
-    if(!(migr_mat.n_slices == T && migr_mat.n_rows == migr_mat.n_cols && arma::all(arma::vectorise(migr_mat) > 0.))) Rcpp::stop("invalid migr_mat");
-
-    arma::cube migr_mat_copy = migr_mat;
-    arma::cube migr_fun = arma::zeros<arma::cube>(migr_mat.n_rows, migr_mat.n_cols, T + 1);
-    migr_fun.slice(0).eye();
-    for (unsigned t=0; t<T; ++t)
-    {
-      for (unsigned i=0; i<migr_mat.n_rows; ++i)
-      {
-        migr_mat_copy.slice(t).at(i,i) = 0.;
-        migr_mat_copy.slice(t).at(i,i) = -arma::accu(migr_mat_copy.slice(t).row(i));
-      }
-      matrix_exponential_multiply transition (arma::trans(migr_mat_copy.slice(t)), migr_fun.slice(t), duration.at(t));
-      migr_fun.slice(t+1) = transition.result;
-    }
-
-    return migr_fun;
-  }
-
-  arma::cube migration_operator (const arma::cube& migr_mat, const arma::vec& duration)
-  {
-    unsigned T = duration.n_elem;
-
-    if(!(migr_mat.n_slices == T && migr_mat.n_rows == migr_mat.n_cols && arma::all(arma::vectorise(migr_mat) > 0.))) Rcpp::stop("invalid migr_mat");
-
-    arma::cube migr_mat_copy = migr_mat;
-    arma::cube migr_fun = arma::zeros<arma::cube>(migr_mat.n_rows, migr_mat.n_cols, T);
-    for (unsigned t=0; t<T; ++t)
-    {
-      for (unsigned i=0; i<migr_mat.n_rows; ++i)
-      {
-        migr_mat_copy.slice(t).at(i,i) = 0.;
-        migr_mat_copy.slice(t).at(i,i) = -arma::accu(migr_mat_copy.slice(t).row(i));
-      }
-      matrix_exponential_multiply transition (arma::trans(migr_mat_copy.slice(t)), arma::eye(migr_mat.n_rows, migr_mat.n_cols), duration.at(t));
-      migr_fun.slice(t) = transition.result;
-    }
-
-    return migr_fun;
-  }
-
-  Rcpp::List migration_function_penalty (const arma::mat& states, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration, const arma::vec& penalty, const unsigned order)
-  {
-    unsigned T = duration.n_elem;
-
-    if(!(migr_mat.n_slices == T && migr_mat.n_rows == migr_mat.n_cols && arma::all(arma::vectorise(migr_mat) >= 0.))) Rcpp::stop("invalid migr_mat");
-    if(!(states.n_rows == migr_mat.n_cols && states.n_rows == states.n_cols && arma::all(arma::vectorise(states) >= 0.))) Rcpp::stop("invalid states");
-    if(!(arma::all(penalty >= 0.) && penalty.n_elem == 5)) Rcpp::stop("invalid penalty");
-
-    std::vector<penalized_migration_function> lin_hist;
-
-    arma::cube migr_fun = arma::zeros<arma::cube>(migr_mat.n_rows, migr_mat.n_cols, T + 1);
-    arma::mat states_copy = states; 
-    arma::mat diff;
-
-    double lp = 0.;
-    migr_fun.slice(0) = states_copy;
-    for (unsigned t=0; t<T; ++t)
-    {
-      lin_hist.emplace_back(states_copy, remap.col(t), migr_mat.slice(t), duration.at(t), penalty.at(3)); //last argument is another type of dirichlet sparsity
-      migr_fun.slice(t+1) = lin_hist[t].migr_fun;
-      lp += lin_hist[t].loglikelihood;
-    }
-
-    arma::cube d_migr_mat (arma::size(migr_mat), arma::fill::zeros);
-    arma::cube d_migr_fun (arma::size(migr_fun), arma::fill::zeros);
-
-    // gradient wrt to smoothness penalty on log migration rates
-    if (penalty.at(0) > 0.)
-    {
-      diff = arma::eye(T, T);
-      for (unsigned i=0; i<order; ++i)
-      {
-        arma::mat d (diff.n_rows - 1, diff.n_rows, arma::fill::zeros);
-        d.diag().fill(-1.0);
-        for(unsigned j=0; j<d.n_rows; ++j)
-        {
-          d.at(j,j+1) = 1.;
-        }
-        diff = d * diff;
-      }
-      for (unsigned i=0; i<migr_fun.n_rows; ++i)
-      {
-        for (unsigned j=0; j<migr_fun.n_cols; ++j)
-        {
-          arma::vec diff_ij = diff * arma::log10(arma::vectorise(migr_mat.tube(i,j)));
-          lp += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(penalty.at(0), 2));
-          diff_ij = -1. * diff_ij * std::pow(penalty.at(0), 2);
-          d_migr_mat.tube(i,j) = diff.t() * diff_ij; 
-          d_migr_mat.tube(i,j) /= (migr_mat.tube(i,j) * log(10));
-        }
-      }
-    }
-
-    // gradient wrt to smoothness penalty on migration function
-    if (penalty.at(1) > 0.)
-    {
-      diff = arma::eye(T+1, T+1);
-      for (unsigned i=0; i<order; ++i)
-      {
-        arma::mat d (diff.n_rows - 1, diff.n_rows, arma::fill::zeros);
-        d.diag().fill(-1.0);
-        for(unsigned j=0; j<d.n_rows; ++j)
-        {
-          d.at(j,j+1) = 1.;
-        }
-        diff = d * diff;
-      }
-      for (unsigned i=0; i<migr_fun.n_rows; ++i)
-      {
-        for (unsigned j=0; j<migr_fun.n_cols; ++j)
-        {
-          arma::vec diff_ij = diff * arma::vectorise(migr_fun.tube(i,j));
-          lp += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(penalty.at(1), 2));
-          diff_ij = -1. * diff_ij * std::pow(penalty.at(1), 2);
-          d_migr_fun.tube(i,j) = diff.t() * diff_ij;
-        }
-      }
-    }
-
-    // penalty on sparsity of cumulative ancestry curves
-    if (penalty.at(2) > 0.)
-    {
-      arma::mat migr_fun_total = arma::zeros(migr_mat.n_rows, migr_mat.n_cols),
-                d_migr_fun_total = arma::zeros(migr_mat.n_rows, migr_mat.n_cols);
-      for (unsigned t=0; t<T; ++t)
-      {
-        migr_fun_total += duration.at(t) * migr_fun.slice(t);
-      }
-      for (unsigned i=0; i<migr_fun_total.n_cols; ++i)
-      {
-        double colsum = arma::accu(migr_fun_total.col(i));
-        arma::vec log_states = penalty.at(2) * arma::log(migr_fun_total.col(i)/colsum);
-        double log_max = log_states.max();
-        double log_sum = log_max + log(arma::accu(arma::exp(log_states - log_max)));
-        lp += log_sum;
-        arma::vec tmp = arma::exp(log(penalty.at(2)) + (penalty.at(2) - 1.) * arma::log(migr_fun_total.col(i)/colsum) - log_sum);
-        double d_colsum = -arma::accu(tmp % migr_fun_total.col(i))/std::pow(colsum,2);
-        d_migr_fun_total.col(i) = tmp / colsum + d_colsum;
-      }
-      for (int t=T-1; t>=0; --t)
-      {
-        d_migr_fun.slice(t) += duration.at(t) * d_migr_fun_total;
-      }
-    }
-
-    // penalty on absolute size of migration rates
-    if (penalty.at(4) > 0.)
-    {
-      // log(exp(-penalty * rate) * C) = -penalty * rate
-      // d/log10 rate = -penalty * log(10) * 10^{log10 rate}
-      for (unsigned i=0; i<migr_mat.n_rows; ++i)
-      {
-        for (unsigned j=0; j<migr_mat.n_rows; ++j)
-        {
-          if (i != j)
-          {
-            for (unsigned t=0; t<T; ++t)
-            {
-              lp += -penalty.at(4) * migr_mat.at(i,j,t);
-              d_migr_mat.at(i,j,t) += -penalty.at(4);
-            }
-          }
-        }
-      }
-    }
-
-    // backpropagate gradient
-    states_copy.zeros();
-    for (int t=T-1; t>=0; --t)
-    {
-      d_migr_mat.slice(t) += lin_hist[t].reverse_differentiate(states_copy, d_migr_fun.slice(t+1));
-    }
-
-    return Rcpp::List::create(
-        Rcpp::_["prediction"] = migr_fun, 
-        Rcpp::_["deviance"] = -2 * lp,
-        Rcpp::_["gradient"] = -2 * d_migr_mat,
-        Rcpp::_["states"] = -2 * states_copy
-        );
-  }
-
-  Rcpp::List debug (const arma::mat& states, const arma::uvec& n, const arma::ucube& y, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration)
-  {
-    unsigned T = duration.n_elem;
-
-    if(!(y.n_slices == T)) Rcpp::stop("invalid y");
-    if(!(remap.n_cols == T)) Rcpp::stop("invalid remap");
-    if(!(migr_mat.n_slices == T)) Rcpp::stop("invalid migr_mat");
-    if(!(duration.n_elem == T)) Rcpp::stop("invalid duration");
-
-    std::vector<coalescent_epoch> epochs;
-    epochs.reserve(T);
-
-    arma::mat states_copy = states;
-    arma::uvec n_copy = n;
-    arma::cube emiss_probs (trans_mat.num_emiss + 1, trans_mat.num_start, T);
-    arma::ucube y_corr (trans_mat.num_emiss + 1, trans_mat.num_start, T);
-    arma::cube state_vectors (states.n_rows, states.n_cols, T+1);
-    arma::vec loglik (T);
-
-    state_vectors.slice(0) = states;
-
-    double lp = 0.;
-    for (unsigned t=0; t<T; ++t)
-    {
-      arma::umat y_copy = y.slice(t);
-      epochs.emplace_back(states_copy, n_copy, y_copy, remap.col(t), migr_mat.slice(t), duration.at(t), &trans_mat);
-      loglik.at(t) = epochs[t].loglikelihood;
-      state_vectors.slice(t) = states_copy;
-      lp += epochs[t].loglikelihood;
-      y_corr.slice(t) = arma::join_vert(y_copy, arma::trans(epochs[t].z));
-      emiss_probs.slice(t) = 
-        arma::join_vert(epochs[t].emiss_probs, arma::ones<arma::rowvec>(trans_mat.num_start) - arma::sum(epochs[t].emiss_probs, 0));
-    }
-
-    arma::cube gradient (arma::size(migr_mat));
-    states_copy.zeros();
-
-    for (int t=T-1; t>=0; --t)
-    {
-      gradient.slice(t) = epochs[t].reverse_differentiate(states_copy);
-    }
-
-    return Rcpp::List::create(
-        Rcpp::_["deviance"] = -2. * lp,
-        Rcpp::_["gradient"] = -2. * gradient,
-        Rcpp::_["states"] = -2. * states_copy,
-        Rcpp::_["state_vectors"] = state_vectors,
-        Rcpp::_["loglikelihood"] = -loglik,
-        Rcpp::_["emission"] = y_corr,
-        Rcpp::_["predicted"] = emiss_probs
-        );
-  }
-
-  Rcpp::List deviance (const arma::mat& states, const arma::uvec& n, const arma::ucube& y, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration)
-  {
-    unsigned T = duration.n_elem;
-
-    if(!(y.n_slices == T)) Rcpp::stop("invalid y");
-    if(!(remap.n_cols == T)) Rcpp::stop("invalid remap");
-    if(!(migr_mat.n_slices == T)) Rcpp::stop("invalid migr_mat");
-    if(!(duration.n_elem == T)) Rcpp::stop("invalid duration");
-
-    std::vector<coalescent_epoch> epochs;
-    epochs.reserve(T);
-
-    arma::mat states_copy = states;
-    arma::uvec n_copy = n;
-    arma::cube emiss_probs (trans_mat.num_emiss + 1, trans_mat.num_start, T);
-    arma::ucube y_corr (trans_mat.num_emiss + 1, trans_mat.num_start, T);
-
-    double lp = 0.;
-    for (unsigned t=0; t<T; ++t)
-    {
-      arma::umat y_copy = y.slice(t);
-      epochs.emplace_back(states_copy, n_copy, y_copy, remap.col(t), migr_mat.slice(t), duration.at(t), &trans_mat);
-      lp += epochs[t].loglikelihood;
-      y_corr.slice(t) = arma::join_vert(y_copy, arma::trans(epochs[t].z));
-      emiss_probs.slice(t) = 
-        arma::join_vert(epochs[t].emiss_probs, arma::ones<arma::rowvec>(trans_mat.num_start) - arma::sum(epochs[t].emiss_probs, 0));
-    }
-
-    arma::cube gradient (arma::size(migr_mat));
-    states_copy.zeros();
-
-    for (int t=T-1; t>=0; --t)
-    {
-      gradient.slice(t) = epochs[t].reverse_differentiate(states_copy);
-    }
-
-    return Rcpp::List::create(
-        Rcpp::_["deviance"] = -2. * lp,
-        Rcpp::_["gradient"] = -2. * gradient,
-        Rcpp::_["states"] = -2. * states_copy,
-        Rcpp::_["emission"] = y_corr,
-        Rcpp::_["predicted"] = emiss_probs
-        );
-  }
-
-  arma::ucube simulate (const arma::mat& states, const arma::uvec& n, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration)
-  {
-    unsigned T = duration.n_elem;
-
-    if(!(remap.n_cols == T)) Rcpp::stop("invalid remap");
-    if(!(migr_mat.n_slices == T)) Rcpp::stop("invalid migr_mat");
-    if(!(duration.n_elem == T)) Rcpp::stop("invalid duration");
-
-    arma::mat states_copy = states;
-    arma::uvec n_copy = n;
-    arma::ucube y_sim (trans_mat.num_emiss, trans_mat.num_start, T);
-
-    for (unsigned t=0; t<T; ++t)
-    {
-      arma::umat y = arma::zeros<arma::umat>(trans_mat.num_emiss, trans_mat.num_start);
-      coalescent_epoch epoch (states_copy, n_copy, y, remap.col(t), migr_mat.slice(t), duration.at(t), &trans_mat, true);
-      y_sim.slice(t) = y;
-    }
-
-    return y_sim;
-  }
-
-  arma::mat initial_states (void)
-  {
-    arma::mat states = arma::eye<arma::mat>(trans_mat.num_trans+trans_mat.num_coal, trans_mat.num_trans);
-    return states.cols(trans_mat.s_map_t);
-  }
-};
+//------------ DEPRECATED --------------
+
+//struct coalescent_epoch
+//{
+//  transition_rate_matrix* rate_matrix;
+//
+//  unsigned P, I, num_trans, num_coal, num_start, num_emiss;
+//  arma::umat c_map_e, s_mask_e, y;
+//  arma::uvec z, remap;
+//  arma::mat migr_mat, tran_probs, coal_probs, emiss_probs;
+//  double duration, loglikelihood;
+//  bool normalizing_constant = false;
+//
+//  matrix_exponential_multiply transition;
+//
+//  coalescent_epoch (arma::mat& states, arma::uvec& n, arma::umat& y_in, arma::uvec remap_in, arma::mat migr_mat_in, double duration_in, transition_rate_matrix* rate_matrix, bool simulate = false)
+//    : rate_matrix (rate_matrix)
+//    , P (rate_matrix->P) 
+//    , I (rate_matrix->I)
+//    , num_trans (rate_matrix->num_trans)
+//    , num_coal (rate_matrix->num_coal)
+//    , num_start (rate_matrix->num_start)
+//    , num_emiss (rate_matrix->num_emiss)
+//    , c_map_e (rate_matrix->c_map_e)
+//    , s_mask_e (rate_matrix->s_mask_e)
+//    , y (y_in)
+//    , remap (remap_in)
+//    , migr_mat (migr_mat_in)
+//    , duration (duration_in)
+//    , loglikelihood (0.)
+//    , transition (arma::trans(rate_matrix->transition_rates(remap, migr_mat)), states, duration)
+//  {
+//    // loglikelihood of counts of coalescent events within window, with reduced emission and starting states
+//    // update states (probabilities that uncoalesced lineages are in XXX configuration)
+//
+//    if(!(states.n_rows == num_trans + num_coal && states.n_cols == num_start)) Rcpp::stop("invalid states");
+//    if(!(n.n_elem == num_start)) Rcpp::stop("invalid n");
+//    if(!(y.n_rows == num_emiss && y.n_cols == num_start && arma::all(n - arma::trans(arma::sum(y,0)) >= 0))) Rcpp::stop("invalid y");
+//
+//    states = transition.result;
+//    tran_probs = states.submat(arma::span(0, num_trans-1), arma::span::all);
+//    coal_probs = states.submat(arma::span(num_trans, num_trans+num_coal-1), arma::span::all);
+//    emiss_probs = arma::mat(num_emiss, states.n_cols, arma::fill::zeros);
+//
+//    for (unsigned i=0; i<num_coal; ++i)
+//    {
+//      for(unsigned j=0; j<num_start; ++j)
+//      {
+//        emiss_probs.at(c_map_e(i,j),j) += coal_probs.at(i,j);
+//      }
+//    }
+//    arma::rowvec uncoal_probs = arma::ones<arma::rowvec>(num_start) - arma::sum(emiss_probs, 0);
+//
+//    // if requested simulate new data
+//    if (simulate)
+//    {
+//      arma::imat y_sim (num_emiss+1, num_start);
+//      arma::mat probs = arma::join_vert(emiss_probs, uncoal_probs);
+//      for (unsigned i=0; i<num_start; ++i)
+//      {
+//        R::rmultinom(n.at(i), probs.colptr(i), num_emiss+1, y_sim.colptr(i));
+//      }
+//      y = arma::conv_to<arma::umat>::from(y_sim.head_rows(num_emiss));
+//    }
+//
+//    // mask coalescent events that are not allowed for a given starting configuration
+//    for (unsigned i=0; i<num_start; ++i)
+//    {
+//      unsigned drop = 0;
+//      for (unsigned j=0; j<num_emiss; ++j)
+//      {
+//        if (s_mask_e.at(j,i))
+//        {
+//          drop += y.at(j,i);
+//          y.at(j,i) = 0;
+//        }
+//      }
+//      n.at(i) -= drop;
+//      // TODO warning about modifying input data?
+//    }
+//    y_in = y; // modify input y, as is done for input n
+//
+//    // multinomial log-likelihood (missing data should be 0 in both n and y)
+//    z = n - arma::trans(arma::sum(y,0)); //member
+//    double lp = 0;
+//    double constant = 0;
+//    for (unsigned i=0; i<num_start; ++i)
+//    {
+//      unsigned nlp = 0;
+//      double psum = 0.;
+//      nlp += z.at(i);
+//      psum += uncoal_probs.at(i);
+//      lp += z.at(i)*log(uncoal_probs.at(i));
+//      if (normalizing_constant) constant += -1. * ::Rf_lgammafn(1+z.at(i));
+//      for (unsigned j=0; j<num_emiss; ++j)
+//      {
+//        if (s_mask_e.at(j,i) == 0)
+//        {
+//          nlp += y.at(j,i);
+//          psum += emiss_probs.at(j,i);
+//          lp += y.at(j,i)*log(emiss_probs.at(j,i));
+//          if (normalizing_constant) constant += -1. * ::Rf_lgammafn(1+y.at(j,i));
+//        }
+//      }
+//      //do I need to normalize to 1? eg will numerical errors cause total 
+//      if (std::fabs(1. - psum) >= sqrt(arma::datum::eps)) Rcpp::Rcout << "fixme:state probability sum " << psum << "\n";
+//      if (normalizing_constant) constant += 1. * ::Rf_lgammafn(1+nlp);
+//    }
+//    lp += constant;
+//
+//    // condition on not coalescing
+//    //tran_probs.each_col([](arma::vec& x){ x /= arma::accu(x) ;});
+//    tran_probs.each_row([&](arma::rowvec& x){ x /= uncoal_probs ;});
+//    states.submat(arma::span(0, num_trans-1), arma::span::all) = tran_probs;
+//    states.submat(arma::span(num_trans, num_trans+num_coal-1), arma::span::all).zeros();
+//
+//    // remaining lineages are uncoalesced lineages
+//    n = z;
+//
+//    loglikelihood = lp; //member
+//  }
+//
+//  arma::mat reverse_differentiate (arma::mat& d_states) 
+//  {
+//    // returns gradient of rate matrix with regard to multinomial loglikelihood
+//    // updates gradient of state vectors with regard to multinomial loglikelihood
+//
+//    if(!(d_states.n_rows == num_trans + num_coal && d_states.n_cols == num_start)) Rcpp::stop("invalid d_states");
+//
+//    arma::rowvec uncoal_probs = arma::ones<arma::rowvec>(num_start) - arma::sum(emiss_probs, 0);
+//
+//    // conditional tran_probs --> unconditional tran_probs
+//    arma::mat d_tran_probs = d_states.submat(arma::span(0, num_trans-1), arma::span::all); 
+//    arma::rowvec d_uncoal_probs = -arma::sum(tran_probs % d_tran_probs, 0) / uncoal_probs;
+//    for (unsigned i=0; i<d_tran_probs.n_rows; ++i)
+//    {
+//      for (unsigned j=0; j<d_tran_probs.n_cols; ++j)
+//      {
+//        d_tran_probs.at(i,j) = d_tran_probs.at(i,j) / uncoal_probs.at(j);
+//      }
+//    }
+//
+//    // loglikelihood --> emission probabilities
+//    arma::mat d_emiss_probs = arma::zeros(arma::size(emiss_probs));
+//    for (unsigned i=0; i<num_start; ++i)
+//    {
+//      for (unsigned j=0; j<num_emiss; ++j)
+//      {
+//        if (s_mask_e.at(j,i) == 0)
+//        {
+//          d_emiss_probs.at(j,i) += double(y.at(j,i))/emiss_probs.at(j,i);
+//        }
+//      }
+//      d_uncoal_probs.at(i) += double(z.at(i))/uncoal_probs.at(i);
+//    }
+//    d_emiss_probs.each_row([&](arma::rowvec& x) { x -= d_uncoal_probs; });
+//
+//    // emission states --> coalescent states
+//    arma::mat d_coal_probs = arma::zeros(num_coal, num_start); 
+//    for (int i=int(num_coal)-1; i>=0; --i)
+//    {
+//      for (int j=int(num_start)-1; j>=0; --j)
+//      {
+//        d_coal_probs.at(i,j) += d_emiss_probs.at(c_map_e(i,j),j);
+//      }
+//    }
+//
+//    // transition/coalescent states --> all states
+//    d_states.submat(arma::span(0, num_trans-1), arma::span::all) = d_tran_probs;
+//    d_states.submat(arma::span(num_trans, num_trans+num_coal-1), arma::span::all) = d_coal_probs;
+//
+//    // current timepoint --> previous timepoint
+//    arma::mat d_states_updated, d_rates;
+//    transition.reverse_differentiate(d_rates, d_states_updated, d_states);
+//    d_states = d_states_updated;
+//
+//    return rate_matrix->reverse_differentiate(arma::trans(d_rates), arma::trans(transition()), remap, migr_mat);
+//  }
+//};
+//
+//// [[Rcpp::export()]]
+//Rcpp::List test_coalescent_epoch (arma::mat states, arma::uvec n, arma::umat y, arma::uvec remap, arma::mat migr_mat, arma::mat gradient)
+//{
+//  arma::mat new_states = states;
+//  transition_rate_matrix rate_matrix (migr_mat.n_rows, 3, true);
+//  double duration = 1.3;
+//  coalescent_epoch epoch (new_states, n, y, remap, migr_mat, duration, &rate_matrix);
+//  double ll = epoch.loglikelihood;
+//  arma::mat grad = epoch.reverse_differentiate (gradient);
+//
+//  return Rcpp::List::create(
+//      Rcpp::_["states"] = new_states, 
+//      Rcpp::_["n"] = n, 
+//      Rcpp::_["grad"] = grad,
+//      Rcpp::_["gradient"] = gradient,
+//      Rcpp::_["rates"] = arma::trans(epoch.transition()), 
+//      Rcpp::_["ll"] = ll
+//      );
+//}
+//
+//struct decoder 
+//{
+//  transition_rate_matrix trans_mat;
+//
+//  decoder (const unsigned num_pop, const unsigned num_ind, const bool approx) : trans_mat(num_pop,num_ind,approx) {}
+//
+//  arma::umat transitory_states (void)
+//  {
+//    return trans_mat.t_states;
+//  }
+//
+//  arma::umat coalescent_states (void)
+//  {
+//    return trans_mat.c_states;
+//  }
+//
+//  arma::umat emission_classes (void)
+//  {
+//    // rows are starting states, columns are populations, values are haplotype counts
+//    // these classes correspond to columns in data "y" / elements of "z"
+//    // used in loglikelihood()
+//
+//    return trans_mat.s_states;
+//  }
+//
+//  arma::umat emission_states (void)
+//  {
+//    // rows are emission types (types of pairwise coalescences), columns are first/second of pair, values are population indices
+//    // these states correspond to rows in data "y" used in loglikelihood()
+//
+//    return trans_mat.e_states;
+//  }
+//
+//  arma::umat map_coalescent_states_to_emission_states (void)
+//  {
+//    return trans_mat.c_map_e;
+//  }
+//
+//  arma::uvec map_emission_classes_to_transitory_states (void)
+//  {
+//    return trans_mat.s_map_t;
+//  }
+//
+//  std::string symbolic_transition_rates (const arma::uvec& remap)
+//  {
+//    return trans_mat.symbolic_transition_rates(remap);
+//  }
+//
+//  arma::mat transition_probabilities (const arma::uvec& remap, const arma::mat& migr_mat, const double& duration)
+//  {
+//    unsigned dim = trans_mat.num_trans + trans_mat.num_coal;
+//    arma::mat eye = arma::eye(dim, dim);
+//    matrix_exponential_multiply transition (arma::trans(trans_mat.transition_rates(remap, migr_mat)), eye, duration);
+//    return transition.result;
+//  }
+//
+//  arma::mat transition_rates (const arma::uvec& remap, const arma::mat& migr_mat)
+//  {
+//    return trans_mat.transition_rates(remap, migr_mat);
+//  }
+//
+//  arma::cube migration_function (const arma::cube& migr_mat, const arma::vec& duration)
+//  {
+//    unsigned T = duration.n_elem;
+//
+//    if(!(migr_mat.n_slices == T && migr_mat.n_rows == migr_mat.n_cols && arma::all(arma::vectorise(migr_mat) > 0.))) Rcpp::stop("invalid migr_mat");
+//
+//    arma::cube migr_mat_copy = migr_mat;
+//    arma::cube migr_fun = arma::zeros<arma::cube>(migr_mat.n_rows, migr_mat.n_cols, T + 1);
+//    migr_fun.slice(0).eye();
+//    for (unsigned t=0; t<T; ++t)
+//    {
+//      for (unsigned i=0; i<migr_mat.n_rows; ++i)
+//      {
+//        migr_mat_copy.slice(t).at(i,i) = 0.;
+//        migr_mat_copy.slice(t).at(i,i) = -arma::accu(migr_mat_copy.slice(t).row(i));
+//      }
+//      matrix_exponential_multiply transition (arma::trans(migr_mat_copy.slice(t)), migr_fun.slice(t), duration.at(t));
+//      migr_fun.slice(t+1) = transition.result;
+//    }
+//
+//    return migr_fun;
+//  }
+//
+//  arma::cube migration_operator (const arma::cube& migr_mat, const arma::vec& duration)
+//  {
+//    unsigned T = duration.n_elem;
+//
+//    if(!(migr_mat.n_slices == T && migr_mat.n_rows == migr_mat.n_cols && arma::all(arma::vectorise(migr_mat) > 0.))) Rcpp::stop("invalid migr_mat");
+//
+//    arma::cube migr_mat_copy = migr_mat;
+//    arma::cube migr_fun = arma::zeros<arma::cube>(migr_mat.n_rows, migr_mat.n_cols, T);
+//    for (unsigned t=0; t<T; ++t)
+//    {
+//      for (unsigned i=0; i<migr_mat.n_rows; ++i)
+//      {
+//        migr_mat_copy.slice(t).at(i,i) = 0.;
+//        migr_mat_copy.slice(t).at(i,i) = -arma::accu(migr_mat_copy.slice(t).row(i));
+//      }
+//      matrix_exponential_multiply transition (arma::trans(migr_mat_copy.slice(t)), arma::eye(migr_mat.n_rows, migr_mat.n_cols), duration.at(t));
+//      migr_fun.slice(t) = transition.result;
+//    }
+//
+//    return migr_fun;
+//  }
+//
+//  Rcpp::List migration_function_penalty (const arma::mat& states, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration, const arma::vec& penalty, const unsigned order)
+//  {
+//    unsigned T = duration.n_elem;
+//
+//    if(!(migr_mat.n_slices == T && migr_mat.n_rows == migr_mat.n_cols && arma::all(arma::vectorise(migr_mat) >= 0.))) Rcpp::stop("invalid migr_mat");
+//    if(!(states.n_rows == migr_mat.n_cols && states.n_rows == states.n_cols && arma::all(arma::vectorise(states) >= 0.))) Rcpp::stop("invalid states");
+//    if(!(arma::all(penalty >= 0.) && penalty.n_elem == 5)) Rcpp::stop("invalid penalty");
+//
+//    std::vector<penalized_migration_function> lin_hist;
+//
+//    arma::cube migr_fun = arma::zeros<arma::cube>(migr_mat.n_rows, migr_mat.n_cols, T + 1);
+//    arma::mat states_copy = states; 
+//    arma::mat diff;
+//
+//    double lp = 0.;
+//    migr_fun.slice(0) = states_copy;
+//    for (unsigned t=0; t<T; ++t)
+//    {
+//      lin_hist.emplace_back(states_copy, remap.col(t), migr_mat.slice(t), duration.at(t), penalty.at(3)); //last argument is another type of dirichlet sparsity
+//      migr_fun.slice(t+1) = lin_hist[t].migr_fun;
+//      lp += lin_hist[t].loglikelihood;
+//    }
+//
+//    arma::cube d_migr_mat (arma::size(migr_mat), arma::fill::zeros);
+//    arma::cube d_migr_fun (arma::size(migr_fun), arma::fill::zeros);
+//
+//    // gradient wrt to smoothness penalty on log migration rates
+//    if (penalty.at(0) > 0.)
+//    {
+//      diff = arma::eye(T, T);
+//      for (unsigned i=0; i<order; ++i)
+//      {
+//        arma::mat d (diff.n_rows - 1, diff.n_rows, arma::fill::zeros);
+//        d.diag().fill(-1.0);
+//        for(unsigned j=0; j<d.n_rows; ++j)
+//        {
+//          d.at(j,j+1) = 1.;
+//        }
+//        diff = d * diff;
+//      }
+//      for (unsigned i=0; i<migr_fun.n_rows; ++i)
+//      {
+//        for (unsigned j=0; j<migr_fun.n_cols; ++j)
+//        {
+//          arma::vec diff_ij = diff * arma::log10(arma::vectorise(migr_mat.tube(i,j)));
+//          lp += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(penalty.at(0), 2));
+//          diff_ij = -1. * diff_ij * std::pow(penalty.at(0), 2);
+//          d_migr_mat.tube(i,j) = diff.t() * diff_ij; 
+//          d_migr_mat.tube(i,j) /= (migr_mat.tube(i,j) * log(10));
+//        }
+//      }
+//    }
+//
+//    // gradient wrt to smoothness penalty on migration function
+//    if (penalty.at(1) > 0.)
+//    {
+//      diff = arma::eye(T+1, T+1);
+//      for (unsigned i=0; i<order; ++i)
+//      {
+//        arma::mat d (diff.n_rows - 1, diff.n_rows, arma::fill::zeros);
+//        d.diag().fill(-1.0);
+//        for(unsigned j=0; j<d.n_rows; ++j)
+//        {
+//          d.at(j,j+1) = 1.;
+//        }
+//        diff = d * diff;
+//      }
+//      for (unsigned i=0; i<migr_fun.n_rows; ++i)
+//      {
+//        for (unsigned j=0; j<migr_fun.n_cols; ++j)
+//        {
+//          arma::vec diff_ij = diff * arma::vectorise(migr_fun.tube(i,j));
+//          lp += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(penalty.at(1), 2));
+//          diff_ij = -1. * diff_ij * std::pow(penalty.at(1), 2);
+//          d_migr_fun.tube(i,j) = diff.t() * diff_ij;
+//        }
+//      }
+//    }
+//
+//    // penalty on sparsity of cumulative ancestry curves
+//    if (penalty.at(2) > 0.)
+//    {
+//      arma::mat migr_fun_total = arma::zeros(migr_mat.n_rows, migr_mat.n_cols),
+//                d_migr_fun_total = arma::zeros(migr_mat.n_rows, migr_mat.n_cols);
+//      for (unsigned t=0; t<T; ++t)
+//      {
+//        migr_fun_total += duration.at(t) * migr_fun.slice(t);
+//      }
+//      for (unsigned i=0; i<migr_fun_total.n_cols; ++i)
+//      {
+//        double colsum = arma::accu(migr_fun_total.col(i));
+//        arma::vec log_states = penalty.at(2) * arma::log(migr_fun_total.col(i)/colsum);
+//        double log_max = log_states.max();
+//        double log_sum = log_max + log(arma::accu(arma::exp(log_states - log_max)));
+//        lp += log_sum;
+//        arma::vec tmp = arma::exp(log(penalty.at(2)) + (penalty.at(2) - 1.) * arma::log(migr_fun_total.col(i)/colsum) - log_sum);
+//        double d_colsum = -arma::accu(tmp % migr_fun_total.col(i))/std::pow(colsum,2);
+//        d_migr_fun_total.col(i) = tmp / colsum + d_colsum;
+//      }
+//      for (int t=T-1; t>=0; --t)
+//      {
+//        d_migr_fun.slice(t) += duration.at(t) * d_migr_fun_total;
+//      }
+//    }
+//
+//    // penalty on absolute size of migration rates
+//    if (penalty.at(4) > 0.)
+//    {
+//      // log(exp(-penalty * rate) * C) = -penalty * rate
+//      // d/log10 rate = -penalty * log(10) * 10^{log10 rate}
+//      for (unsigned i=0; i<migr_mat.n_rows; ++i)
+//      {
+//        for (unsigned j=0; j<migr_mat.n_rows; ++j)
+//        {
+//          if (i != j)
+//          {
+//            for (unsigned t=0; t<T; ++t)
+//            {
+//              lp += -penalty.at(4) * migr_mat.at(i,j,t);
+//              d_migr_mat.at(i,j,t) += -penalty.at(4);
+//            }
+//          }
+//        }
+//      }
+//    }
+//
+//    // backpropagate gradient
+//    states_copy.zeros();
+//    for (int t=T-1; t>=0; --t)
+//    {
+//      d_migr_mat.slice(t) += lin_hist[t].reverse_differentiate(states_copy, d_migr_fun.slice(t+1));
+//    }
+//
+//    return Rcpp::List::create(
+//        Rcpp::_["prediction"] = migr_fun, 
+//        Rcpp::_["deviance"] = -2 * lp,
+//        Rcpp::_["gradient"] = -2 * d_migr_mat,
+//        Rcpp::_["states"] = -2 * states_copy
+//        );
+//  }
+//
+//  Rcpp::List debug (const arma::mat& states, const arma::uvec& n, const arma::ucube& y, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration)
+//  {
+//    unsigned T = duration.n_elem;
+//
+//    if(!(y.n_slices == T)) Rcpp::stop("invalid y");
+//    if(!(remap.n_cols == T)) Rcpp::stop("invalid remap");
+//    if(!(migr_mat.n_slices == T)) Rcpp::stop("invalid migr_mat");
+//    if(!(duration.n_elem == T)) Rcpp::stop("invalid duration");
+//
+//    std::vector<coalescent_epoch> epochs;
+//    epochs.reserve(T);
+//
+//    arma::mat states_copy = states;
+//    arma::uvec n_copy = n;
+//    arma::cube emiss_probs (trans_mat.num_emiss + 1, trans_mat.num_start, T);
+//    arma::ucube y_corr (trans_mat.num_emiss + 1, trans_mat.num_start, T);
+//    arma::cube state_vectors (states.n_rows, states.n_cols, T+1);
+//    arma::vec loglik (T);
+//
+//    state_vectors.slice(0) = states;
+//
+//    double lp = 0.;
+//    for (unsigned t=0; t<T; ++t)
+//    {
+//      arma::umat y_copy = y.slice(t);
+//      epochs.emplace_back(states_copy, n_copy, y_copy, remap.col(t), migr_mat.slice(t), duration.at(t), &trans_mat);
+//      loglik.at(t) = epochs[t].loglikelihood;
+//      state_vectors.slice(t) = states_copy;
+//      lp += epochs[t].loglikelihood;
+//      y_corr.slice(t) = arma::join_vert(y_copy, arma::trans(epochs[t].z));
+//      emiss_probs.slice(t) = 
+//        arma::join_vert(epochs[t].emiss_probs, arma::ones<arma::rowvec>(trans_mat.num_start) - arma::sum(epochs[t].emiss_probs, 0));
+//    }
+//
+//    arma::cube gradient (arma::size(migr_mat));
+//    states_copy.zeros();
+//
+//    for (int t=T-1; t>=0; --t)
+//    {
+//      gradient.slice(t) = epochs[t].reverse_differentiate(states_copy);
+//    }
+//
+//    return Rcpp::List::create(
+//        Rcpp::_["deviance"] = -2. * lp,
+//        Rcpp::_["gradient"] = -2. * gradient,
+//        Rcpp::_["states"] = -2. * states_copy,
+//        Rcpp::_["state_vectors"] = state_vectors,
+//        Rcpp::_["loglikelihood"] = -loglik,
+//        Rcpp::_["emission"] = y_corr,
+//        Rcpp::_["predicted"] = emiss_probs
+//        );
+//  }
+//
+//  Rcpp::List deviance (const arma::mat& states, const arma::uvec& n, const arma::ucube& y, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration)
+//  {
+//    unsigned T = duration.n_elem;
+//
+//    if(!(y.n_slices == T)) Rcpp::stop("invalid y");
+//    if(!(remap.n_cols == T)) Rcpp::stop("invalid remap");
+//    if(!(migr_mat.n_slices == T)) Rcpp::stop("invalid migr_mat");
+//    if(!(duration.n_elem == T)) Rcpp::stop("invalid duration");
+//
+//    std::vector<coalescent_epoch> epochs;
+//    epochs.reserve(T);
+//
+//    arma::mat states_copy = states;
+//    arma::uvec n_copy = n;
+//    arma::cube emiss_probs (trans_mat.num_emiss + 1, trans_mat.num_start, T);
+//    arma::ucube y_corr (trans_mat.num_emiss + 1, trans_mat.num_start, T);
+//
+//    double lp = 0.;
+//    for (unsigned t=0; t<T; ++t)
+//    {
+//      arma::umat y_copy = y.slice(t);
+//      epochs.emplace_back(states_copy, n_copy, y_copy, remap.col(t), migr_mat.slice(t), duration.at(t), &trans_mat);
+//      lp += epochs[t].loglikelihood;
+//      y_corr.slice(t) = arma::join_vert(y_copy, arma::trans(epochs[t].z));
+//      emiss_probs.slice(t) = 
+//        arma::join_vert(epochs[t].emiss_probs, arma::ones<arma::rowvec>(trans_mat.num_start) - arma::sum(epochs[t].emiss_probs, 0));
+//    }
+//
+//    arma::cube gradient (arma::size(migr_mat));
+//    states_copy.zeros();
+//
+//    for (int t=T-1; t>=0; --t)
+//    {
+//      gradient.slice(t) = epochs[t].reverse_differentiate(states_copy);
+//    }
+//
+//    return Rcpp::List::create(
+//        Rcpp::_["deviance"] = -2. * lp,
+//        Rcpp::_["gradient"] = -2. * gradient,
+//        Rcpp::_["states"] = -2. * states_copy,
+//        Rcpp::_["emission"] = y_corr,
+//        Rcpp::_["predicted"] = emiss_probs
+//        );
+//  }
+//
+//  arma::ucube simulate (const arma::mat& states, const arma::uvec& n, const arma::umat& remap, const arma::cube& migr_mat, const arma::vec& duration)
+//  {
+//    unsigned T = duration.n_elem;
+//
+//    if(!(remap.n_cols == T)) Rcpp::stop("invalid remap");
+//    if(!(migr_mat.n_slices == T)) Rcpp::stop("invalid migr_mat");
+//    if(!(duration.n_elem == T)) Rcpp::stop("invalid duration");
+//
+//    arma::mat states_copy = states;
+//    arma::uvec n_copy = n;
+//    arma::ucube y_sim (trans_mat.num_emiss, trans_mat.num_start, T);
+//
+//    for (unsigned t=0; t<T; ++t)
+//    {
+//      arma::umat y = arma::zeros<arma::umat>(trans_mat.num_emiss, trans_mat.num_start);
+//      coalescent_epoch epoch (states_copy, n_copy, y, remap.col(t), migr_mat.slice(t), duration.at(t), &trans_mat, true);
+//      y_sim.slice(t) = y;
+//    }
+//
+//    return y_sim;
+//  }
+//
+//  arma::mat initial_states (void)
+//  {
+//    arma::mat states = arma::eye<arma::mat>(trans_mat.num_trans+trans_mat.num_coal, trans_mat.num_trans);
+//    return states.cols(trans_mat.s_map_t);
+//  }
+//};
 
 //------------------------------------DELETEME
 
@@ -2774,25 +2775,25 @@ struct decoder_gaussian
 
 RCPP_MODULE(particle) {
   using namespace Rcpp;
-  class_<decoder>("decoder")
-    .constructor<unsigned, unsigned, bool>()
-    .method("emission_classes", &decoder::emission_classes)
-    .method("emission_states", &decoder::emission_states)
-    .method("transitory_states", &decoder::transitory_states)
-    .method("coalescent_states", &decoder::coalescent_states)
-    .method("map_coalescent_states_to_emission_states", &decoder::map_coalescent_states_to_emission_states)
-    .method("map_emission_classes_to_transitory_states", &decoder::map_emission_classes_to_transitory_states)
-    .method("symbolic_transition_rates", &decoder::symbolic_transition_rates)
-    .method("transition_probabilities", &decoder::transition_probabilities)
-    .method("transition_rates", &decoder::transition_rates)
-    .method("migration_function", &decoder::migration_function)
-    .method("migration_operator", &decoder::migration_operator)
-    .method("migration_function_penalty", &decoder::migration_function_penalty)
-    .method("debug", &decoder::debug)
-    .method("deviance", &decoder::deviance)
-    .method("simulate", &decoder::simulate)
-    .method("initial_states", &decoder::initial_states)
-    ;
+//  class_<decoder>("decoder")
+//    .constructor<unsigned, unsigned, bool>()
+//    .method("emission_classes", &decoder::emission_classes)
+//    .method("emission_states", &decoder::emission_states)
+//    .method("transitory_states", &decoder::transitory_states)
+//    .method("coalescent_states", &decoder::coalescent_states)
+//    .method("map_coalescent_states_to_emission_states", &decoder::map_coalescent_states_to_emission_states)
+//    .method("map_emission_classes_to_transitory_states", &decoder::map_emission_classes_to_transitory_states)
+//    .method("symbolic_transition_rates", &decoder::symbolic_transition_rates)
+//    .method("transition_probabilities", &decoder::transition_probabilities)
+//    .method("transition_rates", &decoder::transition_rates)
+//    .method("migration_function", &decoder::migration_function)
+//    .method("migration_operator", &decoder::migration_operator)
+//    .method("migration_function_penalty", &decoder::migration_function_penalty)
+//    .method("debug", &decoder::debug)
+//    .method("deviance", &decoder::deviance)
+//    .method("simulate", &decoder::simulate)
+//    .method("initial_states", &decoder::initial_states)
+//    ;
   class_<decoder_gaussian>("decoder_gaussian")
     .constructor<unsigned, unsigned, bool>()
     .method("emission_classes", &decoder_gaussian::emission_classes)
