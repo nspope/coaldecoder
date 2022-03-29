@@ -2615,8 +2615,9 @@ struct decoder_gaussian
     return trans_mat.transition_rates(remap, migr_mat);
   }
 
-  arma::cube coalescence_rates (arma::mat n, const arma::cube& y)
+  arma::cube coalescence_rates (const arma::mat nin, const arma::cube y)
   {
+    arma::mat n = nin;
     if(n.n_elem != y.n_cols) Rcpp::stop("invalid n");
 
     arma::cube rates (arma::size(y));

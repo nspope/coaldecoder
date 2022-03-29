@@ -1,14 +1,14 @@
 Package: coaldecoder
 Type: Package
 Title: coaldecoder
-Version: 0.0.2
-Date: 2020-11-01
+Version: 0.0.3
+Date: 2022-03-28
 Author: Nate Pope
 Maintainer: Nate Pope <nspope@utexas.edu>
-Description: Demographic inference from trio coalescence rates
+Description: Demographic inference from trio coalescence rates in inferred tree sequences
 License: GPL (>= 2)
 Encoding: UTF-8
-LinkingTo: Rcpp, RcppArmadillo, nloptr (>= 1.2.0)
-Imports: expm, Rcpp, RcppArmadillo, nloptr (>= 1.2.0)
-Depends: R (>= 3.0.2)
+LinkingTo: Rcpp, RcppArmadillo 
+Imports: Rcpp, RcppArmadillo, Matrix, numDeriv
+Depends: R (>= 3.5.2)
 RoxygenNote: 6.0.1

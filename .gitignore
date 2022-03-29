@@ -5,4 +5,7 @@
 src/*.o
 src/*.so
 src/*.dll
+src/*.swp
+src/*.bkp
 Rcpp*.tar.gz
+autom4te.cache
