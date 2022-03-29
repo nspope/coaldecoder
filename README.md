@@ -1,22 +1,22 @@
-# coaldecoder
+## coaldecoder
 
 Demographic inference from reconstructed genealogies using trio first coalescence rates. Note that this package is at a 'proof of concept' stage, the API and implementation are bound to change.
 
-# Known issues:
+### Known issues:
 
 - Currently the rate calculation will abort when there are completely missing intervals in tree sequences (e.g. masked regions).
 
-# Python dependencies:
+### Dependencies:
 
+Python:
 - tskit (>0.4.0)
 - numpy
 
-# R dependencies:
-
+R:
 - RcppArmadillo
-- numDeriv (optional; for Hessian/Std.Err calculations)
+- numDeriv (optional, for Hessian)
 
-# Minimal example
+### Minimal example
 
 For example inputs, simulate from a two-population demographic history using `msprime` in python,
 writing the simulated tree sequences out to the native binary format of `tskit`:
@@ -117,14 +117,14 @@ true_durations <- c(10000, 10000, 10000)
 # TODO
 ```
 
-# Population mergers and identifiability
+### Population mergers and identifiability
 
 TODO
 
-# Cross-validation
+### Cross-validation
 
 TODO
 
-# Low-level interface
+### Low-level interface
 
 TODO
