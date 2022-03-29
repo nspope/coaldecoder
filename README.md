@@ -64,13 +64,14 @@ rates <- calculate_rates(
 )
 ```
 
-Next we need to estimate a precision matrix for the rates from the bootstrap replicates. This is needed to inform the model about the variance of the rates. In general, if there are a lot of rate statistics (e.g. many populations/epochs) then an enormous number of bootstrap replicates will be needed to get a full-rank precision matrix with low error. So, instead we'll calculate an full-rank approximation. The simplest approximation is a diagonal precision matrix, but this ignores dependence between rate statistics. A better approach is to calculate a shrinkage estimator, for example:
+Next we need to estimate a precision matrix for the rates from the bootstrap replicates. This is necessary to provide the model with information about the expected variance of the rates. In general, if there are a lot of rate statistics (e.g. many populations/epochs) then an enormous number of bootstrap replicates will be needed to get a full-rank precision matrix with low error. So, we'll calculate a full-rank approximation instead. The simplest full-rank approximation is a diagonal precision matrix, but this ignores dependence between rates within/across epochs. A better approach is to calculate a shrinkage estimator, for example:
 ```r
 prec_mat <- matrix(0, length(rates$y), length(rates$y))
 nonzeros <- as.vector(rates$y > 0)
 prec_mat[nonzeros,nonzeros] <- corpcor::invcov.shrink(t(rates$y_boot[nonzeros,]))
 ```
 Some of the rates are 0 by design, so these have nil precision.
+
 
 Then we need to set up the model, which requires an array of demographic parameters with dimensions `(# populations, # populations, # epochs)` and the durations of the epochs in generations. The parameterization used is identical to that of `msprime`.
 ```r
@@ -80,6 +81,7 @@ demographic_params[1,1,] <- demographic_params[2,2,] <- 5000
 demographic_params[1,2,] <- demographic_params[2,1,] <- 1e-6
 epoch_durations <- rep(3000, 10)
 ```
+
 
 Finally, we can fit the model:
 ```r
@@ -104,7 +106,7 @@ To visualise the fitted model, use:
 # TODO
 ```
 
-Let's that compare to the true model. Remember that `msprime` uses diploid
+Let's compare estimates to the true model. `msprime` uses diploid
 effective population size by default, while `coaldecoder` returns haploid effective
 population sizes, so we need to scale appropriately.
 ```r
