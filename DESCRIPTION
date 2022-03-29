@@ -11,5 +11,5 @@ Encoding: UTF-8
 LinkingTo: Rcpp, RcppArmadillo 
 Imports: Rcpp, RcppArmadillo, Matrix
 Depends: R (>= 3.5.2)
-Suggests: ggplot2, scales, dplyr, numDeriv
+Suggests: ggplot2, scales, dplyr, numDeriv, pammtools
 RoxygenNote: 6.0.1

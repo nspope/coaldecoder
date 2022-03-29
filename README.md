@@ -9,14 +9,15 @@ Demographic inference from reconstructed genealogies using trio first coalescenc
 ### Dependencies:
 
 __python:__
-- tskit (>0.4.0)
+- tskit (>=0.4.0)
 - numpy
 
 __R:__
-- RcppArmadillo
+- RcppArmadillo (>=0.10.6.0.0)
 - numDeriv (optional, for Hessian)
 - ggplot2 (optional, for plots)
 - dplyr (optional, for plots)
+- pammtools (optional, for plots)
 
 ### Minimal example
 
@@ -110,7 +111,7 @@ plot_demographic_model(
   10^fitted_model$par,
   epoch_durations,
   fitted_model$hessian #optional
-)
+) + ggtitle("Fitted model")
 ```
 Each panel is an element of the parameter matrix; e.g. the diagonal panels are effective population sizes, and panel (1, 2) is the backwards-in-time migration rate from population 2 into population 1.
 
@@ -127,8 +128,15 @@ true_durations <- c(10000, 10000, 10000)
 plot_demographic_model(
   true_model,
   true_durations
-)
+) + ggtitle("True model")
 ```
+
+The fitted model accurately captures the "bump" in migration from 2 to 1:
+<p align="center">
+<img alt="True" src="inst/example/example_true_model.png" width="45%">
+&nbsp; &nbsp; &nbsp; &nbsp;
+<img alt="Fitted" src="inst/example/example_fitted_model.png" width="45%">
+</p>
 
 ### Population mergers and identifiability
 
