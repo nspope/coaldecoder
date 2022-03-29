@@ -62,7 +62,7 @@ plot_demographic_model <- function(
     geom_step(aes(y = 10^value)) +
     scale_y_log10("Parameter value",
                   labels = scales::trans_format("log10", 
-                                                scales::math_format(10^.x))
+                                                scales::math_format(10^.x)),
                   ) +
     xlim(0, max(parameters_df$time) * (1 + label_space)) +
     xlab("Time") +

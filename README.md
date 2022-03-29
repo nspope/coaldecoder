@@ -128,7 +128,7 @@ true_durations <- c(10000, 10000, 10000)
 plot_demographic_model(
   true_model,
   true_durations
-) + ggtitle("True model")
+) + ggtitle("True model") -> foo
 ```
 
 The fitted model accurately captures the "bump" in migration from 2 to 1:
