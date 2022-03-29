@@ -54,7 +54,7 @@ calculate_rates <- function(ts_paths,
     )
   } 
 
-  reticulate::py_run_file(system.file("python", "coaldecoder.py", package = "coaldecoder"))
+  reticulate::source_python(system.file("python", "coaldecoder.py", package = "coaldecoder"))
   rates <- lapply(
     trio_first_coalescence_rates(ts_paths, sample_sets, time_breaks, 
                                  bootstrap_replicates, bootstrap_blocks, 
