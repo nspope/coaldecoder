@@ -28,7 +28,7 @@ uname -v = #112~18.04.1-Ubuntu SMP Thu Feb 3 14:09:57 UTC 2022
 /bin/universe          = unknown
 
 PATH: /home/nathaniel/.local/bin
-PATH: /home/nathaniel/miniconda3/bin
+PATH: /home/nathaniel/miniconda3/envs/tskit-dev/bin
 PATH: /home/nathaniel/miniconda3/condabin
 PATH: /home/nathaniel/perl5/bin
 PATH: /home/nathaniel/.local/bin

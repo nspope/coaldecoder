@@ -11,16 +11,15 @@ coaldecoder <- function(
   verbose = TRUE,
   calculate_hessian = TRUE)
 {
+  library(Matrix)
+
   stopifnot(nrow(precision) == prod(dim(rates)))
   stopifnot(dim(demographic_parameters)[3] == length(epoch_duration))
   stopifnot(all(demographic_parameters >= 0))
   stopifnot(all(epoch_duration >= 0))
   stopifnot(all(rates >= 0))
 
-  if (class(precision) == "matrix")
-  {
-    precision <- as("dgCMatrix", precision)
-  }
+  precision <- as(precision, "dgCMatrix")
 
   if (!is.null(population_mapping))
   {
@@ -54,15 +53,18 @@ coaldecoder <- function(
     upper_bounds <- array(-Inf, dim(demographic_parameters))
   }
 
+  deco <- decoder_gaussian$new(nrow(demographic_parameters), 3, TRUE)
   obj <- function(mm) {
     mm <- array(10^mm, dim=dim(demographic_parameters))
-    lik <- deco$deviance(deco$initial_states(), precision, rates, remap, mm, epoch_duration)
+    lik <- deco$deviance(deco$initial_states(), precision, rates, 
+                         population_mapping, mm, epoch_duration)
     prior <- deco$random_walk_prior(mm, penalty, order=1)
     lik$deviance + prior$deviance
     }
   gra <- function(mm) {
     mm <- array(10^mm, dim=dim(demographic_parameters))
-    lik <- deco$deviance(deco$initial_states(), precision, rates, remap, mm, epoch_duration)
+    lik <- deco$deviance(deco$initial_states(), precision, rates, 
+                         population_mapping, mm, epoch_duration)
     prior <- deco$random_walk_prior(mm, penalty, order=1)
     (lik$gradient + prior$gradient) * (mm * log(10))
   }

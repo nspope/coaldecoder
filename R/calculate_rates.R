@@ -7,16 +7,26 @@ calculate_rates <- function(ts_paths,
                             random_seed = NULL,
                             merge_ts = FALSE)
 {
+  deco <- decoder_gaussian$new(length(sample_sets), 3, TRUE)
   parse_raw_inputs <- function(raw)
   {
-    deco <- decoder_gaussian$new(length(sample_sets), 3, TRUE)
     states <- deco$emission_states()
     classes <- deco$emission_classes()
+    population_names <- names(sample_sets)
+    if (is.null(population_names)) population_names <- LETTERS[1:length(sample_sets)]
+    class_names <- paste0("{", apply(classes, 1, function(x) {
+      paste(rep(population_names,x), collapse=",")
+    }), "}")
+    state_names <- apply(states, 1, function(x) {
+      paste(population_names[x+1], collapse=".")
+    })
 
     y <- array(0, c(nrow(states), nrow(classes), length(time_breaks)-1))
     n <- array(0, c(nrow(classes), 1))
     y_boot <- array(0, c(dim(y), dim(raw$y_boot)[3]))
-    n_boot <- array(0, c(dim(n), 1, dim(raw$y_boot)[3]))
+    n_boot <- array(0, c(dim(n), dim(raw$y_boot)[3]))
+    rownames(y) <- rownames(y_boot) <- state_names
+    colnames(y) <- colnames(y_boot) <- rownames(n) <- class_names
 
     for(i in 1:nrow(raw$labels))
     {
@@ -45,12 +55,9 @@ calculate_rates <- function(ts_paths,
          n=n, 
          y_boot=y_boot, 
          n_boot=n_boot, 
-         file=raw$path, 
+         file=raw$file, 
          trees=raw$trees, 
-         size=raw$size, 
-         classes=paste0("{", apply(classes, 1, paste, collapse=","), "}"),
-         states=paste0(apply(classes, 1, paste, collapse="x")),
-         NULL
+         size=raw$size 
     )
   } 
 
@@ -65,8 +72,6 @@ calculate_rates <- function(ts_paths,
   {
     rates <- Reduce(function(a,b)
     {
-      stopifnot(all(a$classes == b$classes))
-      stopifnot(all(a$states == b$states))
       size <- a$size + b$size
       a$y <- a$y * a$size/size + b$y * b$size/size
       a$n <- a$n * a$size/size + b$n * b$size/size
@@ -75,7 +80,21 @@ calculate_rates <- function(ts_paths,
       a$trees <- a$trees + b$trees
       a$file <- c(a$file, b$file)
       a$size <- size
+      a
     }, rates)
+  }
+
+  # convert to proportions
+  rates$y <- exp(deco$coalescence_rates(rates$n, rates$y))
+  if (dim(rates$y_boot)[4] > 0)
+  {
+    for (i in 1:dim(rates$y_boot)[4])
+    {
+      y_tmp <- rates$y_boot[,,,i]
+      n_tmp <- matrix(rates$n_boot[,,i], ncol(y_tmp), 1)
+      rates$y_boot[,,,i] <- exp(deco$coalescence_rates(n_tmp, y_tmp))
+    }
+    rates$y_boot <- array(rates$y_boot, c(length(rates$y), dim(rates$y_boot)[4]))
   }
 
   rates
