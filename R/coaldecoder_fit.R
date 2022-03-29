@@ -9,7 +9,7 @@ coaldecoder <- function(
   upper_bounds = NULL,
   max_restart = 1000,
   verbose = TRUE,
-  calculate_hessian = TRUE)
+  calculate_hessian = FALSE)
 {
   library(Matrix)
 

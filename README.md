@@ -15,6 +15,8 @@ __python:__
 __R:__
 - RcppArmadillo
 - numDeriv (optional, for Hessian)
+- ggplot2 (optional, for plots)
+- dplyr (optional, for plots)
 
 ### Minimal example
 
@@ -90,7 +92,8 @@ fitted_model <- coaldecoder(
   prec_mat,
   demographic_params,
   epoch_durations,
-  penalty = matrix(1, 2, 2)
+  penalty = matrix(1, 2, 2),
+  calculate_hessian = TRUE
 )
 ```
 Here we've specified a smoothing penalty of 1 on the squared differences between log10 parameter values from adjacent epochs. When epochs are numerous (temporal resolution is fine), the penalty will have an enormous impact on the fit, and so it's a good idea to use cross-validation to choose the degree of penalization. That could be done using a holdout set of chromosomes, but we skip that here as the temporal resolution is rather coarse.
@@ -103,20 +106,28 @@ str(fitted_model$hessian) # Hessian matrix, if requested
 
 To visualise the fitted model, use:
 ```r
-# TODO
+plot_demographic_model(
+  10^fitted_model$par,
+  epoch_durations,
+  fitted_model$hessian #optional
+)
 ```
+Each panel is an element of the parameter matrix; e.g. the diagonal panels are effective population sizes, and panel (1, 2) is the backwards-in-time migration rate from population 2 into population 1.
 
-Let's compare estimates to the true model. `msprime` uses diploid
+Let's compare these estimates to the true model. `msprime` uses diploid
 effective population size by default, while `coaldecoder` returns haploid effective
 population sizes, so we need to scale appropriately.
 ```r
-true_model <- array(NA, dim=dim(2,2,3))
+true_model <- array(NA, dim=c(2,2,3))
 true_model[1,1,] <- 20000 * 2
 true_model[2,2,] <- 10000 * 2
 true_model[1,2,] <- c(1e-5, 1e-4, 1e-5)
 true_model[2,1,] <- c(1e-5, 1e-5, 1e-5)
 true_durations <- c(10000, 10000, 10000)
-# TODO
+plot_demographic_model(
+  true_model,
+  true_durations
+)
 ```
 
 ### Population mergers and identifiability

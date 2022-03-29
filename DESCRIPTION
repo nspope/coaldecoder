@@ -9,6 +9,7 @@ Description: Demographic inference from trio coalescence rates in inferred tree 
 License: GPL (>= 2)
 Encoding: UTF-8
 LinkingTo: Rcpp, RcppArmadillo 
-Imports: Rcpp, RcppArmadillo, Matrix, numDeriv
+Imports: Rcpp, RcppArmadillo, Matrix
 Depends: R (>= 3.5.2)
+Suggests: ggplot2, scales, dplyr, numDeriv
 RoxygenNote: 6.0.1
