@@ -2,17 +2,19 @@
 
 Demographic inference from reconstructed genealogies using trio first coalescence rates. Note that this package is at a 'proof of concept' stage, the API and implementation are bound to change.
 
-### Known issues:
+### Known issues
 
 - Currently the rate calculation will abort when there are completely missing intervals in tree sequences (e.g. masked regions).
+- When the model is overdetermined (more populations in model than are actually present) then the parameter estimates become biased. This can be solved by including population mergers (see 'Population mergers and parameter identifiability' section).
+- If any of the epochs contain/go beyond the TMRCA of the tree sequence, then the associated trio rates are undefined (are `NaN`s). This isn't gracefully handled at the moment.
 
-### Dependencies:
+### Dependencies
 
-__python:__
+__python__
 - tskit (>=0.4.0)
 - numpy
 
-__R:__
+__R__
 - RcppArmadillo (>=0.10.6.0.0)
 - numDeriv (optional, for Hessian)
 - ggplot2 (optional, for plots)
