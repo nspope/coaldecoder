@@ -140,14 +140,17 @@ The fitted model accurately captures the "bump" in migration from 2 to 1:
 <img alt="Fitted" src="inst/example/example_fitted_model.png" width="45%">
 </p>
 
+### Low-level interface
+
+The efficient likelihood/gradient calculations in `coaldecoder` may be 
+useful for implementing more complex models (or for use with more sophisticated
+optimizers). The lower-level interface is a C++ class exposed as a reference
+class via `Rcpp`'s modules framework.
+
 ### Population mergers and identifiability
 
 TODO
 
 ### Cross-validation
-
-TODO
-
-### Low-level interface
 
 TODO

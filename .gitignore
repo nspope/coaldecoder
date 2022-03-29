@@ -9,3 +9,4 @@ src/*.swp
 src/*.bkp
 Rcpp*.tar.gz
 autom4te.cache
+config.*
