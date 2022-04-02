@@ -4,8 +4,10 @@
 #include <RcppArmadillo.h> 
 #include <map>
 
-// converted almost verbatim from ...
-// reverse diff is my own
+// C++ implementation based on:
+// https://github.com/scipy/scipy/blob/v1.8.0/scipy/sparse/linalg/_expm_multiply.py#L56-L142
+
+// reverse diff is by Nate Pope
 
 using namespace arma;
 

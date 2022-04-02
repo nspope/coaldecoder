@@ -1,6 +1,12 @@
 # coaldecoder
 
-Demographic inference from reconstructed genealogies using trio first coalescence rates. Note that this package is at a 'proof of concept' stage, the API and implementation are bound to change.
+Demographic inference for multi-population models from reconstructed
+genealogies using trio coalescence rates. The method allows estimation of
+(asymmetric) migration rates and effective population sizes, and scales to
+thousands of epochs and tens of populations. Note that this package is at a
+'proof of concept' stage, the API and implementation are bound to change. The
+underlying model and input statistics are described in [this
+poster](inst/example/Pope_ProbGen2022.pdf). 
 
 ### Known issues
 
@@ -55,7 +61,7 @@ for i,ts in enumerate(ts_gen):
 ```
 Here, we've generated 10 replicate tree sequences (e.g. chromosomes), each 10 Mb long and containing genealogies for 20 haploids per population.
 
-In R, first we calculate trio first coalescence rates. We generate 100 bootstrap replicates by resampling 100 contiguous blocks of trees, and combine rates across the replicate tree sequences. To do this, we need paths to the binary tree sequences, as well as (0-based) indices mapping samples to populations. We also need a time discretization, so we'll use ten 3000-generation epochs.
+In R, first we calculate trio coalescence rates. We generate 100 bootstrap replicates by resampling 100 contiguous blocks of trees, and combine rates across the replicate tree sequences. To do this, we need paths to the binary tree sequences, as well as (0-based) indices mapping samples to populations. We also need a time discretization, so we'll use ten 3000-generation epochs.
 ```r
 library(coaldecoder)
 rates <- calculate_rates(

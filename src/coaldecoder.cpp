@@ -1,19 +1,9 @@
 #include <RcppArmadillo.h> 
 #include <vector>
 #include "expm_revdiff.h"
-
-// [[Rcpp::export]]
-Rcpp::List test_matrix_exponential_multiply (arma::mat A, arma::mat B, double t, arma::mat g)
-{
-  matrix_exponential_multiply out (A, B, t);
-  mat dA; mat dB; 
-  out.reverse_differentiate(dA, dB, g);
-  return Rcpp::List::create(
-      Rcpp::_["dA"] = dA,
-      Rcpp::_["dB"] = dB,
-      Rcpp::_["X"] = out.result
-      );
-}
+#include "expm_revdiff_sparse.h"
+#include "transition_rate_matrix.h"
+#include "admixture_matrix.h"
 
 struct transition_rate_matrix
 {
@@ -302,18 +292,8 @@ struct transition_rate_matrix
             tmp_d.at(p1,p2) += d_rates.at(i,j) * rates.at(i,j)/migr_mat.at(p1,p2);
           }
         }
-        //if (moves == 0) tmp_d.zeros(); //unnecessary
         if (approx && moves > 1) tmp_d.zeros();
         d_migr_mat += tmp_d;
-        //for (unsigned k=0; k<I; ++k)
-        //{
-        //  unsigned p1 = remap.at(t_states.at(i,k)), // origin, backwards in time; destination, forwards in time
-        //           p2 = remap.at(t_states.at(j,k)); // destination, backwards in time; origin, forwards in time
-        //  if (p1 != p2)
-        //  {
-        //    d_migr_mat.at(p1,p2) += d_rates.at(i,j) * rates.at(i,j)/migr_mat.at(p1,p2);
-        //  }
-        //}
       }
     }
 
@@ -323,6 +303,8 @@ struct transition_rate_matrix
   }
 };
 
+// TODO have this impelment different sorts of penalties and NOT do calculations themselves
+// in constructor body
 struct penalized_migration_function
 {
   transition_rate_matrix rate_matrix;
@@ -2527,7 +2509,6 @@ struct coalescent_epoch_gaussian
           d_emiss_probs.at(j,i) += gradient.at(j,i);
         }
       }
-      //d_uncoal_probs.at(i) += double(z.at(i))/uncoal_probs.at(i);
     }
     d_emiss_probs.each_row([&](arma::rowvec& x) { x -= d_uncoal_probs; });
 
@@ -2877,5 +2858,41 @@ RCPP_MODULE(particle) {
     .method("get_s_map_t", &tally_tmrca::get_s_map_t)
     .method("get_c_map_e", &tally_tmrca::get_c_map_e)
     ;
+}
+
+//-----------------------TESTS----------------------//
+
+// [[Rcpp::export]]
+Rcpp::List test_matrix_exponential_multiply (arma::mat A, arma::mat B, double t, arma::mat g)
+{
+  matrix_exponential_multiply out (A, B, t);
+  mat dA; mat dB; 
+  out.reverse_differentiate(dA, dB, g);
+  return Rcpp::List::create(
+      Rcpp::_["dA"] = dA,
+      Rcpp::_["dB"] = dB,
+      Rcpp::_["X"] = out.result
+      );
+}
+
+// [[Rcpp::export()]]
+Rcpp::List test_coalescent_epoch_gaussian (arma::mat states, arma::mat migr_mat, arma::mat gradient)
+{
+  transition_rate_matrix rate_matrix (migr_mat.n_rows, 3, true);
+  arma::uvec remap (migr_mat.n_rows);
+  for(unsigned i=0; i<remap.n_elem; i++) remap[i] = i;
+  arma::mat y = arma::ones(rate_matrix.num_emiss, rate_matrix.num_start);
+  double duration = 0.31;
+  coalescent_epoch_gaussian epoch (states, y, remap, migr_mat, duration, &rate_matrix);
+  //precision is identity so y (residual) is gradient
+  arma::mat gradient_M = epoch.reverse_differentiate (gradient, y);
+
+  return Rcpp::List::create(
+      Rcpp::_["states"] = states, 
+      Rcpp::_["gradient_M"] = gradient_M,
+      Rcpp::_["gradient_states"] = gradient,
+      Rcpp::_["y_hat"] = epoch.emiss_probs,
+      Rcpp::_["residual"] = y
+      );
 }
 

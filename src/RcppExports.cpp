@@ -25,11 +25,81 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// test_coalescent_epoch_gaussian
+Rcpp::List test_coalescent_epoch_gaussian(arma::mat states, arma::mat migr_mat, arma::mat gradient);
+RcppExport SEXP _coaldecoder_test_coalescent_epoch_gaussian(SEXP statesSEXP, SEXP migr_matSEXP, SEXP gradientSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type states(statesSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type migr_mat(migr_matSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type gradient(gradientSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_coalescent_epoch_gaussian(states, migr_mat, gradient));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_SparseMatrixExponentialMultiply
+Rcpp::List test_SparseMatrixExponentialMultiply(arma::sp_mat A, arma::mat B, double t, arma::mat g);
+RcppExport SEXP _coaldecoder_test_SparseMatrixExponentialMultiply(SEXP ASEXP, SEXP BSEXP, SEXP tSEXP, SEXP gSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::sp_mat >::type A(ASEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type B(BSEXP);
+    Rcpp::traits::input_parameter< double >::type t(tSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type g(gSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_SparseMatrixExponentialMultiply(A, B, t, g));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_TrioTransitionRates
+Rcpp::List test_TrioTransitionRates(arma::mat M, arma::sp_mat G);
+RcppExport SEXP _coaldecoder_test_TrioTransitionRates(SEXP MSEXP, SEXP GSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type M(MSEXP);
+    Rcpp::traits::input_parameter< arma::sp_mat >::type G(GSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_TrioTransitionRates(M, G));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_TrioAdmixtureProportions
+Rcpp::List test_TrioAdmixtureProportions(arma::mat A, arma::sp_mat G);
+RcppExport SEXP _coaldecoder_test_TrioAdmixtureProportions(SEXP ASEXP, SEXP GSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type A(ASEXP);
+    Rcpp::traits::input_parameter< arma::sp_mat >::type G(GSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_TrioAdmixtureProportions(A, G));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_CoalescentEpoch
+Rcpp::List test_CoalescentEpoch(arma::mat states, arma::mat M, arma::mat A, arma::mat gradient);
+RcppExport SEXP _coaldecoder_test_CoalescentEpoch(SEXP statesSEXP, SEXP MSEXP, SEXP ASEXP, SEXP gradientSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type states(statesSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type M(MSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type A(ASEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type gradient(gradientSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_CoalescentEpoch(states, M, A, gradient));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 RcppExport SEXP _rcpp_module_boot_particle();
 
 static const R_CallMethodDef CallEntries[] = {
     {"_coaldecoder_test_matrix_exponential_multiply", (DL_FUNC) &_coaldecoder_test_matrix_exponential_multiply, 4},
+    {"_coaldecoder_test_coalescent_epoch_gaussian", (DL_FUNC) &_coaldecoder_test_coalescent_epoch_gaussian, 3},
+    {"_coaldecoder_test_SparseMatrixExponentialMultiply", (DL_FUNC) &_coaldecoder_test_SparseMatrixExponentialMultiply, 4},
+    {"_coaldecoder_test_TrioTransitionRates", (DL_FUNC) &_coaldecoder_test_TrioTransitionRates, 2},
+    {"_coaldecoder_test_TrioAdmixtureProportions", (DL_FUNC) &_coaldecoder_test_TrioAdmixtureProportions, 2},
+    {"_coaldecoder_test_CoalescentEpoch", (DL_FUNC) &_coaldecoder_test_CoalescentEpoch, 4},
     {"_rcpp_module_boot_particle", (DL_FUNC) &_rcpp_module_boot_particle, 0},
     {NULL, NULL, 0}
 };
