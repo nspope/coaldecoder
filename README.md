@@ -70,8 +70,7 @@ rates <- calculate_rates(
   time_breaks = seq(0, 30000, 3000),
   bootstrap_replicates = 100,
   bootstrap_blocks = 100,
-  random_seed = 1024,
-  merge_ts = TRUE
+  random_seed = 1024
 )
 ```
 

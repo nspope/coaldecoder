@@ -95,6 +95,68 @@ def trio_first_coalescence_rates(
         }]
     return out
 
+def _count_all_trio_coalescence_events(node, tree, sample_sets):
+    """
+    TODO: this also counts first coalescence events, see above.
+    Version that makes it into tskit should be *only* full trios.
+
+    Count the number of trios that coalesce in node,
+    within and between the sets of samples in ``sample_sets``. In other
+    words, count topologies of the form ``((A,B),C)node`` where ``A,B,C``
+    are labels and `node` is the node ID.  The count of pairs with members
+    that belong to sets :math:`a` and :math:`b` with outgroup :math:`c` is:
+
+    .. math:
+
+        TODO
+
+    where :math:`C_i(a)` is the number of samples from set :math:`a`
+    descended from child :math:`i` of the node, and :math:`O(c)` is the
+    number of samples from set :math:`c` that are *not* descended from the
+    node.  The values in the output are ordered canonically by pair then
+    outgroup; e.g. if ``len(sample_sets) == 2`` then the values would
+    correspond to counts of pairs with set labels,
+    ``[((0,0),0), ((0,0),1), ((0,1),0), ((0,1),1), ...]``.
+    """
+    samples = list(tree.samples(node))
+    outg_counts = [len(s) - len(np.intersect1d(samples, s)) for s in sample_sets]
+    pair_counts = CoalescenceTimeDistribution._count_pair_coalescence_events(
+        node, tree, sample_sets
+    )
+    trio_counts = []
+    # first coalescence events
+    for i in pair_counts:
+        for j in outg_counts:
+            trio_counts.append(i * j)
+    # second coalescence events
+    children = tree.children(node)
+    child_pair_counts = np.zeros((len(children), len(pair_counts)), "int32")
+    child_sample_counts = np.zeros((len(children), len(outg_counts)), "int32")
+    for i,child in enumerate(children):
+        samples = list(tree.samples(child))
+        child_sample_counts[i,:] = [
+            len(np.intersect1d(samples, s)) for s in sample_sets
+        ]
+        child_pair_counts[i,:] = CoalescenceTimeDistribution._count_pair_coalescence_events(
+            child, tree, sample_sets
+        )
+    #for i in possible pairs:
+    #  for j in possible samples:
+    #       sum = 0
+    #       iterate over children duos u,v
+    #           sum += number of i-pair in u * number of j-sample in v +
+    #                  number of i-pair in v * number of j-sample in u
+    for i in range(child_pair_counts.shape[1]):
+        for j in range(child_sample_counts.shape[1]):
+            count = 0
+            for u, v in itertools.combinations(
+                range(len(children)), 2
+            ):
+                count += (child_pair_counts[u,i] * child_sample_counts[v,j] +
+                    child_pair_counts[v,i] * child_sample_counts[u,j])
+            trio_counts.append(count)
+    return np.array(trio_counts, "int32")
+
 def trio_coalescence_rates(
     ts_paths,
     sample_sets,
@@ -126,7 +188,7 @@ def trio_coalescence_rates(
         ts = tskit.load(path)
         distr = CoalescenceTimeDistribution(
             ts,
-            weight_func='trio_coalescence_events', 
+            weight_func=_count_all_trio_coalescence_events, 
             sample_sets=sample_sets,
             blocks_per_window=bootstrap_blocks,
             span_normalise=True
@@ -151,7 +213,6 @@ def trio_coalescence_rates(
             "file" : path, "y" : y, "n" : n, 
             "y_boot" : y_boot, "n_boot" : n_boot, 
             "size" : ts.sequence_length, "trees" : ts.num_trees, 
-            "labels" : np.array(labels),
         }]
     return out
 
@@ -296,70 +357,6 @@ class CoalescenceTimeDistribution:
         for i in pair_counts:
             for j in outg_counts:
                 trio_counts.append(i * j)
-        return np.array(trio_counts, "int32")
-
-    @staticmethod
-    def _count_all_trio_coalescence_events(node, tree, sample_sets):
-        """
-        TODO: this also counts first coalescence events, see above.
-        Version that makes it into tskit should be *only* full trios.
-
-        Count the number of trios that coalesce in node,
-        within and between the sets of samples in ``sample_sets``. In other
-        words, count topologies of the form ``((A,B),C)node`` where ``A,B,C``
-        are labels and `node` is the node ID.  The count of pairs with members
-        that belong to sets :math:`a` and :math:`b` with outgroup :math:`c` is:
-
-        .. math:
-
-            TODO
-
-        where :math:`C_i(a)` is the number of samples from set :math:`a`
-        descended from child :math:`i` of the node, and :math:`O(c)` is the
-        number of samples from set :math:`c` that are *not* descended from the
-        node.  The values in the output are ordered canonically by pair then
-        outgroup; e.g. if ``len(sample_sets) == 2`` then the values would
-        correspond to counts of pairs with set labels,
-        ``[((0,0),0), ((0,0),1), ((0,1),0), ((0,1),1), ...]``.
-        """
-        samples = list(tree.samples(node))
-        outg_counts = [len(s) - len(np.intersect1d(samples, s)) for s in sample_sets]
-        pair_counts = CoalescenceTimeDistribution._count_pair_coalescence_events(
-            node, tree, sample_sets
-        )
-        trio_counts = []
-        # first coalescence events
-        for i in pair_counts:
-            for j in outg_counts:
-                trio_counts.append(i * j)
-        # second coalescence events
-        child_pair_counts = []
-        child_sample_counts = []
-        for child in tree.children(node):
-            samples = list(tree.samples(child))
-            child_sample_counts += [[
-                len(np.intersect1d(samples, s)) for s in sample_sets
-            ]]
-            child_pair_counts += [[
-                CoalescenceTimeDistribution._count_pair_coalescence_events(
-                    child, tree, sample_sets
-                )
-            ]]
-        #for i in possible pairs:
-        #  for j in possible samples:
-        #       sum = 0
-        #       iterate over children duos u,v
-        #           sum += number of i-pair in u * number of j-sample in v +
-        #                  number of i-pair in v * number of j-sample in u
-        for i in range(len(pair_counts)):
-            for j in range(len(sample_counts)):
-                count = 0
-                for u, v in itertools.combinations(
-                    range(len(child_sample_counts)), 2
-                ):
-                    count += (child_pair_counts[u][i] * child_sample_counts[v][j] +
-                        child_pair_counts[v][i] * child_sample_counts[u][j])
-                trio_counts.append(count)
         return np.array(trio_counts, "int32")
 
     def _update_weights_by_edge_diff(self, tree, edge_diff, running_weights):

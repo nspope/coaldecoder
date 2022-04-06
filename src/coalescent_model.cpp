@@ -283,6 +283,27 @@ struct CoalescentDecoder
   arma::cube B; // bootstrap precision
   arma::vec t; // epoch duration
 
+  // constructor with no input data
+  CoalescentDecoder (
+      const unsigned _P, 
+      const arma::vec& _t, // epoch duration
+      const bool _use_rates = true,
+      const bool _check_valid = true
+  ) : check_valid (_check_valid)
+    , use_rates (_use_rates)
+    , P (_P)
+    , T (_t.n_elem)
+    , rate_matrix_template (arma::ones(_P, _P))
+    , emission_mapping (rate_matrix_template.emission_to_initial())
+    , state_mapping (rate_matrix_template.states_to_emission())
+    , initial_mapping (rate_matrix_template.initial_to_states())
+  {
+    t = _t;
+    y = arma::mat(emission_mapping.n_cols, T, arma::fill::zeros);
+    B = arma::cube(y.n_rows, y.n_rows, T, arma::fill::zeros);
+  }
+
+  // constructor with input data
   CoalescentDecoder (
       const unsigned _P, 
       const arma::cube& _y, // number lineages coalescing in interval
@@ -738,6 +759,7 @@ RCPP_MODULE(CoalescentDecoder) {
   using namespace Rcpp;
   class_<CoalescentDecoder>("CoalescentDecoder")
     .constructor<unsigned, arma::cube, arma::mat, arma::vec, bool, bool>()
+    .constructor<unsigned, arma::vec, bool, bool>()
     .method("observed_rates", &CoalescentDecoder::observed_rates)
     .method("precision_matrices", &CoalescentDecoder::precision_matrices)
     .method("initial_states", &CoalescentDecoder::initial_states)
