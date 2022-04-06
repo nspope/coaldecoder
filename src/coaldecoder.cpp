@@ -1,3 +1,25 @@
+//
+// MIT License
+//
+// Copyright (c) 2021-2022 Nathaniel S. Pope
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+// of the Software, and to permit persons to whom the Software is furnished to do
+// so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 #include <RcppArmadillo.h> 
 #include <vector>
 #include "expm_revdiff.h"
@@ -2596,12 +2618,29 @@ struct decoder_gaussian
     return trans_mat.transition_rates(remap, migr_mat);
   }
 
-  arma::cube coalescence_rates (const arma::mat nin, const arma::cube y)
+  arma::cube coalescence_rates (const arma::mat nin, const arma::cube yin)
   {
+    arma::cube y = yin;
     arma::mat n = nin;
     if(n.n_elem != y.n_cols) Rcpp::stop("invalid n");
 
-    arma::cube rates (arma::size(y));
+    // remove masked (inaccessible) emissions
+    // note that "n" is left unchanged
+    for (unsigned t=0; t<y.n_slices; ++t)
+    {
+      for (unsigned j=0; j<y.n_rows; ++j)
+      {
+        for (unsigned i=0; i<y.n_cols; ++i)
+        {
+          if (trans_mat.s_mask_e.at(j,i))
+          {
+            y.at(j,i,t) = 0.0;
+          }
+        }
+      }
+    }
+
+    arma::cube rates (arma::size(y), arma::fill::zeros);
     for (unsigned t=0; t<y.n_slices; ++t)
     {
       for (unsigned i=0; i<y.n_cols; ++i)

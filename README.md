@@ -1,11 +1,11 @@
 # coaldecoder
 
-Demographic inference for multi-population models from reconstructed
-genealogies using trio coalescence rates. The method allows estimation of
-(asymmetric) migration rates and effective population sizes, and scales to
-thousands of epochs and tens of populations. Note that this package is at a
-'proof of concept' stage, the API and implementation are bound to change. The
-underlying model and input statistics are described in [this
+An R package for demographic inference for multi-population models from
+reconstructed genealogies using trio coalescence rates. The method allows
+estimation of (asymmetric) migration rates and effective population sizes, and
+scales to thousands of epochs and tens of populations. Note that this package
+is at a 'proof of concept' stage, the API and implementation are bound to
+change. The underlying model and input statistics are described in [this
 poster](inst/example/Pope_ProbGen2022.pdf). 
 
 ### Known issues

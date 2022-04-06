@@ -27,7 +27,7 @@ all(dplyr::near(rowSums(foo2$matrix), 1))
 
 #-------------- test jacobian ---------------------------#
 set.seed(1)
-A <- matrix(c(0.9,0.1,0,0.3,0.2,0.5,0.1,0.1,0.8), 3, 3, byrow=TRUE)
+A <- matrix(c(0.9,0.05,0.05,0.3,0.2,0.5,0.1,0.1,0.8), 3, 3, byrow=TRUE)
 G <- as(matrix(rnorm((4^3 - 1)^2), 4^3 - 1, 4^3 - 1), "dgCMatrix")
 foo4 <- test_TrioAdmixtureProportions(A, G)
 
@@ -38,6 +38,4 @@ jac <- numDeriv::jacobian(function(A)
 }, A)
 
 all(dplyr::near(c(foo4$reverse_differentiate), t(jac) %*% c(as.matrix(G))))
-
-
 

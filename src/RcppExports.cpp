@@ -92,6 +92,7 @@ END_RCPP
 }
 
 RcppExport SEXP _rcpp_module_boot_particle();
+RcppExport SEXP _rcpp_module_boot_CoalescentDecoder();
 
 static const R_CallMethodDef CallEntries[] = {
     {"_coaldecoder_test_matrix_exponential_multiply", (DL_FUNC) &_coaldecoder_test_matrix_exponential_multiply, 4},
@@ -101,6 +102,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_coaldecoder_test_TrioAdmixtureProportions", (DL_FUNC) &_coaldecoder_test_TrioAdmixtureProportions, 2},
     {"_coaldecoder_test_CoalescentEpoch", (DL_FUNC) &_coaldecoder_test_CoalescentEpoch, 4},
     {"_rcpp_module_boot_particle", (DL_FUNC) &_rcpp_module_boot_particle, 0},
+    {"_rcpp_module_boot_CoalescentDecoder", (DL_FUNC) &_rcpp_module_boot_CoalescentDecoder, 0},
     {NULL, NULL, 0}
 };
 

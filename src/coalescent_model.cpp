@@ -1,3 +1,25 @@
+//
+// MIT License
+//
+// Copyright (c) 2021-2022 Nathaniel S. Pope
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+// of the Software, and to permit persons to whom the Software is furnished to do
+// so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 #include <RcppArmadillo.h> 
 #include <vector>
 #include <string>
@@ -10,6 +32,7 @@ struct CoalescentEpoch
   const std::string prefix = "[CoalescentEpoch] ";
   const bool check_valid = true;
   const bool use_marginal_statistics = true; //see note in cnstr
+  const bool use_rates = false; //see note in cnstr
 
   const TrioAdmixtureProportions admix_matrix;
   const TrioTransitionRates rate_matrix;
@@ -80,7 +103,7 @@ struct CoalescentEpoch
         Rcpp::stop(prefix + "Epoch duration cannot be negative");
       }
 
-      if (arma::any(arma::sum(_states, 0) != 1.0))
+      if (arma::any(arma::abs(arma::sum(_states, 0) - 1.0) > _states.n_rows*arma::datum::eps))
       {
         Rcpp::stop(prefix + "State probability vector does not sum to one");
       }
@@ -135,7 +158,12 @@ struct CoalescentEpoch
         coalesced_end[j - offset] += coalesced_end[j];
       }
     }
+
     y_hat = (coalesced_end - coalesced_start) / uncoalesced;
+    if (use_rates)
+    {
+      y_hat /= t;
+    }
 
     // Calculate loglikelihood
     residual = y - y_hat;
@@ -159,6 +187,12 @@ struct CoalescentEpoch
     arma::vec d_uncoalesced = -y_hat % gradient/uncoalesced;
     arma::vec d_coalesced_start = -gradient/uncoalesced;
     arma::vec d_coalesced_end = gradient/uncoalesced;
+    if (use_rates)
+    {
+      // TODO check this
+      d_coalesced_start /= t;
+      d_coalesced_end /= t;
+    }
     arma::vec d_transitory_start = arma::zeros(num_initial);
     int offset = num_emission / 2;
     for (int j=num_emission-1; j>=0; --j)
@@ -190,24 +224,22 @@ struct CoalescentEpoch
     // (this adds gradient contribution to existing d_states)
     SparseMatrixExponentialMultiply transition (
       arma::trans(rate_matrix.X), admix_matrix.X * states, t);
+    arma::mat tmp = arma::zeros(arma::size(_states));
     arma::sp_mat d_rate_matrix = 
-      transition.reverse_differentiate(d_states, _states); 
-    _states = d_states;
+      transition.reverse_differentiate(tmp, _states); 
+    _states = tmp;
 
     // Gradient wrt pre-admixture state vectors, trio admixture matrix
-    arma::sp_mat d_admix_matrix = admix_matrix.X;
-    for (arma::sp_mat::iterator it = d_admix_matrix.begin(); 
-         it != d_admix_matrix.end(); ++it)
+    arma::sp_mat d_admix_matrix (arma::size(admix_matrix.X));
+    for (arma::sp_mat::const_iterator it = admix_matrix.X.begin(); 
+         it != admix_matrix.X.end(); ++it)
     {
-      double val = (*it) + arma::dot(_states.row(it.row()), states.row(it.col()));
-      if (val == 0.0)
-      {
-        Rcpp::stop(prefix + " Can't void nonzero element");
-      }
-      (*it) = val;
+      double val = arma::dot(_states.row(it.row()), states.row(it.col()));
+      d_admix_matrix.at(it.row(), it.col()) = val;
     }
-    d_admix_matrix -= admix_matrix.X;
+    //arma::sp_mat d_admix_matrix (_states * arma::trans(states));
     _states = arma::trans(admix_matrix.X) * _states;
+    _states = _states + d_states;
 
     // Gradient wrt demographic parameter, admixture matrices
     arma::cube d_parameters (rate_matrix.P, rate_matrix.P, 2);
@@ -237,7 +269,8 @@ struct CoalescentDecoder
 {
   const std::string prefix = "[CoalescentDecoder] ";
   const bool check_valid = true;
-  const bool use_marginal_statistics = true;
+  const bool use_marginal_statistics = true; //see notes in method coalescence_rate
+  const bool use_rates = false; //divide coalescence probabilities by time
 
   const unsigned P; //number of populations
   const unsigned T; //number of epochs
@@ -252,11 +285,13 @@ struct CoalescentDecoder
 
   CoalescentDecoder (
       const unsigned _P, 
-      const arma::mat& _y, 
-      const arma::cube& _y_boot, 
-      const arma::vec& _t,
-      const bool _check_valid
+      const arma::cube& _y, // number lineages coalescing in interval
+      const arma::mat& _n, // number lineages 
+      const arma::vec& _t, // epoch duration
+      const bool _use_rates = true,
+      const bool _check_valid = true
   ) : check_valid (_check_valid)
+    , use_rates (_use_rates)
     , P (_P)
     , T (_t.n_elem)
     , rate_matrix_template (arma::ones(_P, _P))
@@ -268,29 +303,108 @@ struct CoalescentDecoder
     {
       Rcpp::stop(prefix + " dimension of 'y' does not match");
     }
-    if (_y_boot.n_rows != emission_mapping.n_cols || _y_boot.n_cols != T)
+    if (_n.n_rows != emission_mapping.n_cols || _n.n_cols != _y.n_slices)
     {
-      Rcpp::stop(prefix + " dimension of 'y_boot' does not match");
+      Rcpp::stop(prefix + " dimension of 'n' does not match");
     }
 
-    // process data, estimate bootstrap precision matrices
-    y = _y;
-    B = arma::cube(_y.n_rows, _y.n_rows, T);
+    // epoch durations
     t = _t;
+
+    // convert raw statistics to rates
+    arma::cube x (arma::size(_y));
+    for (unsigned i=0; i<_y.n_slices; ++i)
+    {
+      x.slice(i) = coalescence_rates(_y.slice(i), _n.col(i), _t, use_rates, use_marginal_statistics);
+    }
+
+    // observed statistics
+    y = x.slice(0);
+
+    // bootstrap precision matrices
+    // (use identity matrix if no bootstrap reps)
+    // (hmm these could get quite largish)
+    B = arma::cube(_y.n_rows, _y.n_rows, T, arma::fill::zeros);
+    unsigned num_boot = _y.n_slices - 1;
+    unsigned offset = emission_mapping.n_cols / 2;
     for (unsigned i=0; i<T; ++i)
     {
-      arma::mat x = _y_boot.col(i);
-      B.slice(i) = arma::inv(arma::cov(arma::trans(x)));
+      if (num_boot > 0)
+      {
+        arma::mat b = arma::zeros(num_boot, x.n_rows);
+        for (unsigned j = 0; j < num_boot; ++j)
+        {
+          b.row(j) = arma::trans(x.slice(j+1).col(i));
+        }
+        //<DEBUG> "disable" trio rates
+        auto pair_idx = arma::span(0, offset-1);//DEBUG
+        b = b.cols(pair_idx);//DEBUG
+        B.slice(i).submat(pair_idx, pair_idx) = arma::inv(arma::cov(b));//DEBUG
+        //<\DEBUG>
+        //B.slice(i) = arma::inv(arma::cov(b));
+      } else {
+        //<DEBUG> "disable" trio rates
+        auto pair_idx = arma::span(0, offset-1);//DEBUG
+        B.slice(i).submat(pair_idx, pair_idx).eye();
+        //<\DEBUG>
+        //B.slice(i).eye();
+      }
     }
-    if (!use_marginal_statistics)
+  }
+
+  arma::mat coalescence_rates (const arma::mat& _y, const arma::vec& _n, const arma::vec& _t, const bool _use_rates = true, const bool _use_marginal_statistics = true)
+  {
+    if (_y.n_rows != emission_mapping.n_cols)
     {
-      //TODO
-      // Input rates are marginal:
-      //   [p(t > end) - p(t > start)] / [1.0 - p(t < start)]
-      // We want:
-      //   [p(t1 > end & t2 > end) - p(t1 > start & t2 > end)] / [1.0 - p(t1 < start)]
-      // To calculate these we need to modify numerator and denominator
+      Rcpp::stop(prefix + "Need a coalescence count for each emission");
     }
+    if (_n.n_elem != _y.n_rows || _y.n_cols != _t.n_elem)
+    {
+      Rcpp::stop(prefix + "Coalescence count dimensions don't match");
+    }
+
+    // get denominator; e.g. total mass associated with starting
+    // configuration
+    arma::mat n = arma::zeros (initial_mapping.n_cols, 2);
+    for (unsigned i=0; i<emission_mapping.n_cols; ++i)
+    {
+      arma::uword col = emission_mapping.at(0,i);
+      arma::uword lin = emission_mapping.at(1,i);
+      n.at(col, lin-1) += _n.at(i);
+    }
+
+    // calculate rates
+    arma::mat y (arma::size(_y));
+    for (unsigned i=0; i<T; ++i)
+    {
+      // if not using marginal rates, things get more complicated
+      // so let's hold off on that for the moment
+      for (unsigned j=0; j<emission_mapping.n_cols; ++j)
+      {
+        arma::uword col = emission_mapping.at(0,j);
+        arma::uword lin = emission_mapping.at(1,j);
+        y.at(j, i) = _y.at(j, i) / n.at(col, lin-1);
+      }
+      for (unsigned j=0; j<emission_mapping.n_cols; ++j)
+      {
+        arma::uword col = emission_mapping.at(0,j);
+        arma::uword lin = emission_mapping.at(1,j);
+        n.at(col, lin-1) -= _y.at(j, i);
+      }
+      if (_use_rates) y.col(i) /= _t.at(i);
+    }
+
+    return y;
+  }
+
+  arma::mat observed_rates (void) const
+  {
+    return y;
+  }
+
+  arma::cube precision_matrices (void) const
+  {
+    return B;
   }
 
   std::vector<std::string> initial_states (void) const
@@ -371,7 +485,7 @@ struct CoalescentDecoder
         Rcpp::stop(prefix + "Admixture proportions have negative values");
       }
       arma::vec Asum = arma::sum(_A, 1);
-      if (arma::any(Asum != 1.0))
+      if (arma::any(arma::abs(Asum - 1.0) > _A.n_cols*arma::datum::eps))
       {
         Rcpp::stop(prefix + "Admixture proportions do not sum to one");
       }
@@ -516,7 +630,7 @@ struct CoalescentDecoder
         );
   }
 
-  arma::mat initial_states (void)
+  arma::mat initial_state_vectors (void)
   {
     /*
      *  Returns state vectors at time 0
@@ -524,7 +638,7 @@ struct CoalescentDecoder
 
     arma::mat states = arma::zeros<arma::mat>(
         arma::accu(rate_matrix_template.S), 
-        arma::accu(rate_matrix_template.S)
+        initial_mapping.n_cols
     );
     for (unsigned i=0; i<initial_mapping.n_cols; ++i)
     {
@@ -618,3 +732,24 @@ Rcpp::List test_CoalescentEpoch (arma::mat states, arma::mat M, arma::mat A, arm
       );
 }
 
+//---------------- EXPOSED CLASSES ----------------//
+
+RCPP_MODULE(CoalescentDecoder) {
+  using namespace Rcpp;
+  class_<CoalescentDecoder>("CoalescentDecoder")
+    .constructor<unsigned, arma::cube, arma::mat, arma::vec, bool, bool>()
+    .method("observed_rates", &CoalescentDecoder::observed_rates)
+    .method("precision_matrices", &CoalescentDecoder::precision_matrices)
+    .method("initial_states", &CoalescentDecoder::initial_states)
+    .method("emission_states", &CoalescentDecoder::emission_states)
+    .method("transition_rates", &CoalescentDecoder::transition_rates)
+    .method("admixture_proportions", &CoalescentDecoder::admixture_proportions)
+    .method("coalescence_rates", &CoalescentDecoder::coalescence_rates)
+    .method("transition_operator", &CoalescentDecoder::transition_operator)
+    .method("admixture_operator", &CoalescentDecoder::admixture_operator)
+    .method("occupancy_probabilities", &CoalescentDecoder::occupancy_probabilities)
+    .method("smoothness_penalty", &CoalescentDecoder::smoothness_penalty)
+    .method("loglikelihood", &CoalescentDecoder::loglikelihood)
+    .method("initial_state_vectors", &CoalescentDecoder::initial_state_vectors)
+    ;
+}
