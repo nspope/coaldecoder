@@ -131,3 +131,35 @@ gra_X <- numDeriv::grad(function(X)
 }, X)
 
 test_3.3 <- all(dplyr::near(c(foo$gradient$X), gra_X))
+
+#----------------test with bootstraps, dividing rates by time---------------#
+#be SURE to check gradient
+#TODO:
+
+#----------------test smoothness penalty at different orders---------------#
+deco <- CoalescentDecoder$new(2, c(10.,20.,30.,40.,50.), FALSE, FALSE)
+
+M <- array(0, c(2,2,5))
+M[1,1,] <- 10^rnorm(dim(M)[3], 3, 0.1)
+M[2,2,] <- 10^rnorm(dim(M)[3], 3, 0.1)
+M[1,2,] <- 10^rnorm(dim(M)[3], -4, 0.1)
+M[2,1,] <- 10^rnorm(dim(M)[3], -4, 0.1)
+penalty <- matrix(c(1,0.5,2,0.3),2,2,byrow=TRUE)
+
+foo <- deco$smoothness_penalty(M, penalty, 1)
+gra_M <- numDeriv::grad(function(M)
+               {
+               foo <- deco$smoothness_penalty(10^M, penalty, 1)
+               foo$penalty
+}, log10(M))
+
+test_5.1 <- all(dplyr::near(c(foo$gradient * log(10) * M), gra_M))
+
+foo <- deco$smoothness_penalty(M, penalty, 2)
+gra_M <- numDeriv::grad(function(M)
+               {
+               foo <- deco$smoothness_penalty(10^M, penalty, 2)
+               foo$penalty
+}, log10(M))
+
+test_5.2 <- all(dplyr::near(c(foo$gradient * log(10) * M), gra_M))

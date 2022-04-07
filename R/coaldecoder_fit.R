@@ -91,3 +91,87 @@ coaldecoder <- function(
   }
   fit
 }
+
+#TODO: make it take in time breaks not duration
+coaldecoder_trio <- function(
+  rates,
+  demographic_parameters,
+  admixture_coefficients,
+  epoch_duration,
+  penalty = NULL,
+  lower_bounds = NULL,
+  upper_bounds = NULL,
+  max_restart = 1000,
+  verbose = TRUE,
+  calculate_hessian = FALSE)
+{
+  library(Matrix)
+
+  stopifnot(class(rates) == "TrioCoalescenceRates")
+  stopifnot(dim(demographic_parameters)[3] == length(epoch_duration))
+  stopifnot(all(demographic_parameters >= 0))
+  stopifnot(dim(admixture_coefficients)[3] == length(epoch_duration))
+  stopifnot(all(admixture_coefficients >= 0 & admixture_coefficients <= 1))
+  stopifnot(all(epoch_duration >= 0))
+  stopifnot(all(rates$y >= 0))
+  stopifnot(all(rates$n >= 0))
+
+  if (!is.null(penalty))
+  {
+    stopifnot(nrow(penalty) == nrow(demographic_parameters))
+    stopifnot(ncol(penalty) == ncol(demographic_parameters))
+    stopifnot(all(penalty >= 0))
+  } else {
+    penalty <- matrix(0, nrow(demographic_parameters), ncol(demographic_parameters))
+  }
+
+  if (!is.null(lower_bounds))
+  {
+    stopifnot(all(dim(demographic_parameters) == dim(lower_bounds)))
+  } else {
+    lower_bounds <- array(-Inf, dim(demographic_parameters))
+  }
+  if (!is.null(upper_bounds))
+  {
+    stopifnot(all(dim(demographic_parameters) == dim(upper_bounds)))
+  } else {
+    upper_bounds <- array(-Inf, dim(demographic_parameters))
+  }
+
+  deco <- CoalescentDecoder$new(nrow(demographic_parameters), rates$y, rates$n, epoch_duration, FALSE, TRUE)
+  obj <- function(mm) {
+    mm <- array(10^mm, dim=dim(demographic_parameters))
+    lik <- deco$loglikelihood(deco$initial_state_vectors(), mm, admixture_coefficients)
+    prior <- deco$smoothness_penalty(mm, penalty, order=1)
+    -(lik$loglikelihood + prior$penalty)
+    }
+  gra <- function(mm) {
+    mm <- array(10^mm, dim=dim(demographic_parameters))
+    lik <- deco$loglikelihood(deco$initial_state_vectors(), mm, admixture_coefficients)
+    prior <- deco$smoothness_penalty(mm, penalty, order=1)
+    -(lik$gradient$M + prior$gradient) * (mm * log(10))
+  }
+  fit <- optim(log10(demographic_parameters), fn=obj, gr=gra, method="L-BFGS-B")
+  for(i in 1:max_restart)
+  {
+    if (fit$convergence == 0) 
+    { 
+      break
+    } else if (fit$message == "NEW_X") {
+      fit <- optim(fit$par, fn=obj, gr=gra, method="L-BFGS-B")
+      if (verbose) {
+        cat("L-BFGS-B restart:", i, "Deviance:", 2*fit$value, "\n")
+      }
+    } else {
+      warning("Optimization failed")
+      return(fit)
+    }
+  }
+  if (calculate_hessian)
+  {
+    hessian <- numDeriv::jacobian(gra, fit$par)
+    fit$hessian <- (hessian + t(hessian))/2
+  }
+  fit$obs <- deco$observed_rates()
+  fit
+}

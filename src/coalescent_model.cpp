@@ -344,7 +344,11 @@ struct CoalescentDecoder
 
     // bootstrap precision matrices
     // (use identity matrix if no bootstrap reps)
-    // (hmm these could get quite largish)
+    //
+    // TODO: re-evaluate strategy here. If inputs are small (they are)
+    // this should be internally rescaled. If there are a lot of pops, we may want
+    // to use a shrinkage approach, which would require implementing something separately.
+    // As a workaround for now, maybe add a separate constructor that allows B to be specified.
     B = arma::cube(_y.n_rows, _y.n_rows, T, arma::fill::zeros);
     unsigned num_boot = _y.n_slices - 1;
     unsigned offset = emission_mapping.n_cols / 2;
@@ -529,7 +533,7 @@ struct CoalescentDecoder
     return out;
   }
 
-  Rcpp::List smoothness_penalty (const arma::cube& _M, const arma::mat& penalty, const unsigned order = 1)
+  Rcpp::List smoothness_penalty (const arma::cube& _M, const arma::mat& _penalty, const unsigned _order = 1)
   {
     /*
      *  Calculates a penalty on squared differences of a given order, for each
@@ -537,7 +541,7 @@ struct CoalescentDecoder
      *  and on a log10 scale.  Also calculates the gradient wrt the penalty.
      */
 
-    if (order == 0)
+    if (_order == 0)
     {
       Rcpp::stop(prefix + "Order of differencing operator must be a positive integer");
     }
@@ -549,11 +553,11 @@ struct CoalescentDecoder
     {
       Rcpp::stop(prefix + "Demographic parameter array has negative values");
     }
-    if (penalty.n_rows != P || penalty.n_cols != P)
+    if (_penalty.n_rows != P || _penalty.n_cols != P)
     {
       Rcpp::stop(prefix + "Penalty matrix has wrong dimensions");
     }
-    if (arma::any(arma::vectorise(penalty) < 0.0))
+    if (arma::any(arma::vectorise(_penalty) < 0.0))
     {
       Rcpp::stop(prefix + "Penalty matrix has negative values");
     }
@@ -562,7 +566,7 @@ struct CoalescentDecoder
 
     // construct difference operator
     arma::sp_mat diff = arma::speye(T, T);
-    for (unsigned i=0; i<order; ++i)
+    for (unsigned i=0; i<_order; ++i)
     {
       arma::sp_mat d = -1.0 * arma::speye(diff.n_rows - 1, diff.n_rows);
       for(unsigned j=0; j<d.n_rows; ++j)
@@ -573,21 +577,21 @@ struct CoalescentDecoder
     }
 
     // prior, gradient of prior wrt parameters
-    double logprior = 0;
+    double penalty = 0;
     for (unsigned i=0; i<P; ++i)
     {
       for (unsigned j=0; j<P; ++j)
       {
         arma::vec diff_ij = diff * arma::log10(arma::vectorise(_M.tube(i,j)));
-        logprior += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(penalty.at(i,j), 2));
-        diff_ij = -1. * diff_ij * std::pow(penalty.at(i,j), 2);
+        penalty += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(_penalty.at(i,j), 2));
+        diff_ij = -1. * diff_ij * std::pow(_penalty.at(i,j), 2);
         gradient_M.tube(i,j) = diff.t() * diff_ij; 
         gradient_M.tube(i,j) /= (_M.tube(i,j) * log(10));
       }
     }
 
     return Rcpp::List::create(
-        Rcpp::_["logprior"] = logprior,
+        Rcpp::_["penalty"] = penalty,
         Rcpp::_["gradient"] = gradient_M
         );
   }
@@ -735,7 +739,6 @@ Rcpp::List test_CoalescentEpoch (arma::mat states, arma::mat M, arma::mat A, arm
   arma::mat P = arma::eye(e_map.n_cols, e_map.n_cols);
 
   CoalescentEpoch epoch (states, y, P, M, A, t, e_map, s_map, i_map, false);
-  double ll = epoch.loglikelihood;
   arma::cube gradient_M = epoch.reverse_differentiate(gradient);
 
   return Rcpp::List::create(

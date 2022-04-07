@@ -159,6 +159,13 @@ calculate_trio_rates <- function(ts_paths,
       a$size <- size
       a
     }, rates)
+    class(rates) <- "TrioCoalescenceRates"
+  } else {
+    for (i in 1:length(rates))
+    {
+      names(rates)[i] <- rates[[i]]$file
+      class(rates)[[i]] <- "TrioCoalescenceRates"
+    }
   }
 
   rates

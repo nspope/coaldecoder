@@ -184,6 +184,8 @@ def trio_coalescence_rates(
 
     out = []
     for path in ts_paths:
+        print("Extracting rates for " + path) #TODO: control verbosity
+
         # read tree sequence
         ts = tskit.load(path)
         distr = CoalescenceTimeDistribution(
