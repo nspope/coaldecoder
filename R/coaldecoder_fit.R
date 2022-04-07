@@ -96,8 +96,8 @@ coaldecoder <- function(
 coaldecoder_trio <- function(
   rates,
   demographic_parameters,
-  admixture_coefficients,
-  epoch_duration,
+  time_breaks,
+  admixture_coefficients = NULL,
   penalty = NULL,
   lower_bounds = NULL,
   upper_bounds = NULL,
@@ -108,13 +108,25 @@ coaldecoder_trio <- function(
   library(Matrix)
 
   stopifnot(class(rates) == "TrioCoalescenceRates")
-  stopifnot(dim(demographic_parameters)[3] == length(epoch_duration))
-  stopifnot(all(demographic_parameters >= 0))
-  stopifnot(dim(admixture_coefficients)[3] == length(epoch_duration))
-  stopifnot(all(admixture_coefficients >= 0 & admixture_coefficients <= 1))
-  stopifnot(all(epoch_duration >= 0))
   stopifnot(all(rates$y >= 0))
   stopifnot(all(rates$n >= 0))
+  stopifnot(dim(demographic_parameters)[3] == length(epoch_duration))
+  stopifnot(all(demographic_parameters >= 0))
+  stopifnot(0.0 %in% time_breaks)
+  stopifnot(all(time_breaks >= 0))
+  stopifnot(!is.unsorted(time_breaks))
+
+  if (!is.null(admixture_coefficients))
+  {
+    stopifnot(dim(admixture_coefficients)[3] == length(epoch_duration))
+    stopifnot(all(admixture_coefficients >= 0 & admixture_coefficients <= 1))
+  } else {
+    admixture_coefficients <- array(0, dim(demographic_parameters))
+    for (i in 1:nrow(admixture_coefficients))
+    {
+      admixture_coefficients[i,i,] <- 1.0
+    }
+  }
 
   if (!is.null(penalty))
   {
@@ -137,6 +149,9 @@ coaldecoder_trio <- function(
   } else {
     upper_bounds <- array(-Inf, dim(demographic_parameters))
   }
+
+
+  epoch_duration <- diff(time_breaks)
 
   deco <- CoalescentDecoder$new(nrow(demographic_parameters), rates$y, rates$n, epoch_duration, FALSE, TRUE)
   obj <- function(mm) {

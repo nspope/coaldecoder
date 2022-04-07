@@ -1,0 +1,11 @@
+1. Streamlined rate calculation without using edge diffs
+2. Add active parameter detection: mask parameters where
+  - demographic parameters are Inf (coalescence) or 0 (migration rates)
+  - admixture coefficient vectors are unitary
+  - be sure that penalty calculation works here -- may need to set parts of gradient to 0 by hand
+3. Prior on population size at time 0
+4. Godambe information matrix?
+5. Hessian --> Laplace approximation
+6. Easier cross validation
+  - automate splitting into test/train in rate calculation
+  - automate refitting model across grid of penalty values

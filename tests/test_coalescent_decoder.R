@@ -20,6 +20,7 @@ M[2,1,] <- 2e-5
 A <- array(0, c(2,2,3))
 A[1,1,] <- A[2,2,] <- 0.3
 A[1,2,] <- A[2,1,] <- 0.7
+
 X <- deco$initial_state_vectors()
 foo <- deco$loglikelihood(X, M, A)
 
