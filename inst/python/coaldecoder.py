@@ -140,12 +140,6 @@ def _count_all_trio_coalescence_events(node, tree, sample_sets):
         child_pair_counts[i,:] = CoalescenceTimeDistribution._count_pair_coalescence_events(
             child, tree, sample_sets
         )
-    #for i in possible pairs:
-    #  for j in possible samples:
-    #       sum = 0
-    #       iterate over children duos u,v
-    #           sum += number of i-pair in u * number of j-sample in v +
-    #                  number of i-pair in v * number of j-sample in u
     for i in range(child_pair_counts.shape[1]):
         for j in range(child_sample_counts.shape[1]):
             count = 0
@@ -731,3 +725,4 @@ class CoalescenceTimeDistribution:
                 )
                 table.resample_blocks(block_multiplier)
             yield replicate
+

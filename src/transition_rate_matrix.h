@@ -223,6 +223,35 @@ struct TrioTransitionRates
     return out;
   }
 
+  std::vector<std::string> transitory_states (void) const
+  {
+    std::vector<std::string> out (arma::accu(S));
+    arma::uvec::fixed<3> u;
+
+    for (u[0]=0; u[0]<=P; ++u[0])
+    {
+      for (u[1]=0; u[1]<=P; ++u[1])
+      {
+        for (u[2]=0; u[2]<=P; ++u[2])
+        {
+          std::string name = "{";
+          name += u[0] == P ? "C" : std::to_string(u[0]);
+          name += ",";
+          name += u[1] == P ? "C" : std::to_string(u[1]);
+          name += ",";
+          name += u[2] == P ? "C" : std::to_string(u[2]);
+          name += "}";
+          if (!arma::all(u == P))
+          {
+            out[linear_index(u)] = name;
+          }
+        }
+      }
+    }
+
+    return out;
+  }
+
   arma::umat initial_to_states (void) const
   {
     /*

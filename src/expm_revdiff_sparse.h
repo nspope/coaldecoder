@@ -313,4 +313,30 @@ struct SparseMatrixExponentialMultiply
   }
 };
 
+// need to be able to set a step size, otherwise it'll blow up for large time intervals
+//struct SparseMatrixExponentialMultiplyStep
+//{
+//  const std::string prefix = "[SparseMatrixExponentialMultiplyStep] ";
+//  std::vector<SparseMatrixExponentialMultiply> mat_exp_step;
+//
+//  SparseMatrixExponentialMultiplyStep (
+//      const sp_mat& A, 
+//      const mat& B, 
+//      const double& t,
+//      const double step = 0.0) 
+//  {
+//    if (step < 0.0) Rcpp::stop(prefix + " Step length cannot be negative");
+//
+//    // chunk t by step
+//    
+//    // push back mat_exp
+//  }
+//
+//  void reverse_differentiate (?)
+//  {
+//    // loop back over mat exp and revdiff
+//
+//  }
+//};
+
 #endif

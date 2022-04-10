@@ -98,14 +98,20 @@ struct CoalescentEpoch
 
     if (check_valid)
     {
-      if (_t < 0.0)
+      if (_t <= 0.0)
       {
-        Rcpp::stop(prefix + "Epoch duration cannot be negative");
+        Rcpp::stop(prefix + "Epoch duration must be positive");
       }
 
       if (arma::any(arma::abs(arma::sum(_states, 0) - 1.0) > _states.n_rows*arma::datum::eps))
       {
         Rcpp::stop(prefix + "State probability vector does not sum to one");
+      }
+
+      if (arma::any(arma::vectorise(_states) < 0.0))
+      {
+        // TODO: wrap matrix exponential in iterative step length thing
+        Rcpp::stop(prefix + "Negative state probabilities, use shorter step length for integration");
       }
     }
 
@@ -134,6 +140,7 @@ struct CoalescentEpoch
       coalesced_end.at(j) += _states.at(row, col);
     }
 
+    arma::vec subtransitory_start = arma::zeros(num_initial);
     uncoalesced = arma::zeros(num_emission);
     int offset = num_emission / 2;
     for (int j=0; j<num_emission; ++j)
@@ -141,9 +148,12 @@ struct CoalescentEpoch
       arma::uword col = emission_mapping.at(0,j);
       arma::uword lin = emission_mapping.at(1,j);
 
+      // sum mass over transitory 2-lineage states in a column
+      subtransitory_start[col] += lin == 2 ? coalesced_start[j] : 0.0;
+
       // 2-lineage states can transition to 1-lineage states
       uncoalesced[j] = lin == 2 ? transitory_start[col] :
-        transitory_start[col] + coalesced_start[j - offset]; 
+        transitory_start[col] + subtransitory_start[col]; 
 
       // if the input probabilities are marginal, add 1-lineage to 2-lineage.
       // this is because the state vector contains:
@@ -160,10 +170,7 @@ struct CoalescentEpoch
     }
 
     y_hat = (coalesced_end - coalesced_start) / uncoalesced;
-    if (use_rates)
-    {
-      y_hat /= t;
-    }
+    y_hat /= t;
 
     // Calculate loglikelihood
     residual = y - y_hat;
@@ -182,18 +189,16 @@ struct CoalescentEpoch
     unsigned num_emission = emission_mapping.n_cols;
     unsigned num_initial = initial_mapping.n_cols;
 
+    // Gradient wrt fitted rates
+    arma::vec d_y_hat = gradient * 1.0/t;
+
     // Gradient wrt state vectors
     arma::mat d_states = arma::zeros(arma::size(states));
-    arma::vec d_uncoalesced = -y_hat % gradient/uncoalesced;
-    arma::vec d_coalesced_start = -gradient/uncoalesced;
-    arma::vec d_coalesced_end = gradient/uncoalesced;
-    if (use_rates)
-    {
-      // TODO check this
-      d_coalesced_start /= t;
-      d_coalesced_end /= t;
-    }
+    arma::vec d_uncoalesced = -t * y_hat % d_y_hat/uncoalesced;
+    arma::vec d_coalesced_start = -d_y_hat/uncoalesced;
+    arma::vec d_coalesced_end = d_y_hat/uncoalesced;
     arma::vec d_transitory_start = arma::zeros(num_initial);
+    arma::vec d_subtransitory_start = arma::zeros(num_initial);
     int offset = num_emission / 2;
     for (int j=num_emission-1; j>=0; --j)
     {
@@ -207,7 +212,10 @@ struct CoalescentEpoch
       d_transitory_start[col] += d_uncoalesced[j];
       if (lin == 1) 
       {
-        d_coalesced_start[j - offset] += d_uncoalesced[j];
+        //d_coalesced_start[j - offset] += d_uncoalesced[j];
+        d_subtransitory_start[col] += d_uncoalesced[j];
+      } else if (lin == 2) {
+        d_coalesced_start[j] += d_subtransitory_start[col];
       }
     }
     for (unsigned i=0; i<state_mapping.n_cols; ++i)
@@ -237,7 +245,6 @@ struct CoalescentEpoch
       double val = arma::dot(_states.row(it.row()), states.row(it.col()));
       d_admix_matrix.at(it.row(), it.col()) = val;
     }
-    //arma::sp_mat d_admix_matrix (_states * arma::trans(states));
     _states = arma::trans(admix_matrix.X) * _states;
     _states = _states + d_states;
 
@@ -287,10 +294,8 @@ struct CoalescentDecoder
   CoalescentDecoder (
       const unsigned _P, 
       const arma::vec& _t, // epoch duration
-      const bool _use_rates = true,
       const bool _check_valid = true
   ) : check_valid (_check_valid)
-    , use_rates (_use_rates)
     , P (_P)
     , T (_t.n_elem)
     , rate_matrix_template (arma::ones(_P, _P))
@@ -309,10 +314,8 @@ struct CoalescentDecoder
       const arma::cube& _y, // number lineages coalescing in interval
       const arma::mat& _n, // number lineages 
       const arma::vec& _t, // epoch duration
-      const bool _use_rates = true,
       const bool _check_valid = true
   ) : check_valid (_check_valid)
-    , use_rates (_use_rates)
     , P (_P)
     , T (_t.n_elem)
     , rate_matrix_template (arma::ones(_P, _P))
@@ -442,6 +445,11 @@ struct CoalescentDecoder
     return rate_matrix_template.emission_states();
   }
 
+  std::vector<std::string> transitory_states (void) const
+  {
+    return rate_matrix_template.transitory_states();
+  }
+
   arma::sp_mat transition_rates (const arma::mat& _M)
   {
     /*
@@ -509,10 +517,12 @@ struct CoalescentDecoder
       {
         Rcpp::stop(prefix + "Admixture proportions have negative values");
       }
-      arma::vec Asum = arma::sum(_A, 1);
-      if (arma::any(arma::abs(Asum - 1.0) > _A.n_cols*arma::datum::eps))
+      for (unsigned i=0; i<P; ++i)
       {
-        Rcpp::stop(prefix + "Admixture proportions do not sum to one");
+        if (std::fabs(arma::accu(_A.col(i)) - 1.0) > _A.n_rows*arma::datum::eps)
+        {
+          Rcpp::stop(prefix + "Admixture proportions do not sum to one");
+        }
       }
     }
 
@@ -761,12 +771,13 @@ Rcpp::List test_CoalescentEpoch (arma::mat states, arma::mat M, arma::mat A, arm
 RCPP_MODULE(CoalescentDecoder) {
   using namespace Rcpp;
   class_<CoalescentDecoder>("CoalescentDecoder")
-    .constructor<unsigned, arma::cube, arma::mat, arma::vec, bool, bool>()
-    .constructor<unsigned, arma::vec, bool, bool>()
+    .constructor<unsigned, arma::cube, arma::mat, arma::vec, bool>()
+    .constructor<unsigned, arma::vec, bool>()
     .method("observed_rates", &CoalescentDecoder::observed_rates)
     .method("precision_matrices", &CoalescentDecoder::precision_matrices)
     .method("initial_states", &CoalescentDecoder::initial_states)
     .method("emission_states", &CoalescentDecoder::emission_states)
+    .method("transitory_states", &CoalescentDecoder::transitory_states)
     .method("transition_rates", &CoalescentDecoder::transition_rates)
     .method("admixture_proportions", &CoalescentDecoder::admixture_proportions)
     .method("coalescence_rates", &CoalescentDecoder::coalescence_rates)

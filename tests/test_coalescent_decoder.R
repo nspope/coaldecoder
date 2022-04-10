@@ -3,13 +3,10 @@ library(Matrix)
 
 #---------------no bootstraps, not dividing by time-------------#
 P <- 2
-M <- matrix(1, P, P)
-set.seed(1); G <- as(matrix(rnorm(((P+1)^3 - 1)^2), (P+1)^3 - 1, (P+1)^3 - 1), "dgCMatrix")
-foo <- test_TrioTransitionRates(M, G)
 
 y <- array(1, c(12, 3, 1))
 n <- matrix(100, 12, 1)
-deco <- CoalescentDecoder$new(2, y, n, c(10.,20.,30.), FALSE, FALSE)
+deco <- CoalescentDecoder$new(2, y, n, c(1000.,1000.,1000.), FALSE)
 
 M <- array(0, c(2,2,3))
 M[1,1,] <- 1000
@@ -47,6 +44,9 @@ gra_X <- numDeriv::grad(function(X)
 }, X)
 
 test_1.3 <- all(dplyr::near(c(foo$gradient$X), gra_X))
+
+
+#------------------____DEPR____-----------------------#
 
 #---------------no bootstraps, not dividing by time-------------#
 # testing equivalence with earlier impelementation, so no admixture

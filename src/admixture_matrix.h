@@ -128,7 +128,7 @@ struct TrioAdmixtureProportions
     {
       if (check_valid)
       {
-        if (std::fabs(arma::accu(A.row(i)) - 1.0) > arma::datum::eps)
+        if (std::fabs(arma::accu(A.col(i)) - 1.0) > A.n_rows*arma::datum::eps)
         {
           Rcpp::stop(prefix + "Admixture proportions do not sum to one");
         }
