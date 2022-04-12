@@ -67,7 +67,7 @@ pop_tree$plot_expected_coalescence_rates(observed=rates, time_scale=1000, log_tr
   ggtitle("Fitted coalescence rates") -> rates_plot
 ```
 This produces plots of estimated demographic parameters (left), and fitted coalescence rates (right).
-Each panel of the left plot is the estimated trajectory for a demographic parameter. **Inverse** effective
+Each panel of the left plot is the estimated trajectory for a demographic parameter, between the time it was sampled (point) and the time it merges with another population or hits the last epoch. **Inverse** effective
 population sizes are on the diagonal; migration rates are on the offdiagonal. The panels of the right plot
 are coalescence rates for the first and second coalescence events of a trio with a given population labelling.
 These rates are the "raw data" used by the method, and are calculated directly from the input tree sequence. The
