@@ -76,6 +76,11 @@ points are the observations, the lines are the expected rates under the fitted d
 <img alt="Fitted" src="inst/example/coaldecoder_example_fitted.png" width="90%">
 </p>
 
+The "gaps" in the demographic parameter estimates reflect when populations are/are not extant, e.g. which is made clear by the population tree:
+<p align="center">
+<img alt="Fitted" src="inst/example/coaldecoder_example_tree.png" width="45%">
+</p>
+
 Compare to the (goofy-looking) **true** demographic parameters (e.g. used to simulate data):
 <p align="center">
 <img alt="Fitted" src="inst/example/coaldecoder_example_true.png" width="45%">
