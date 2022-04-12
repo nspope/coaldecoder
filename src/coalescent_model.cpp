@@ -32,7 +32,9 @@ struct CoalescentEpoch
   const std::string prefix = "[CoalescentEpoch] ";
   const bool check_valid = true;
   const bool use_marginal_statistics = true; //see note in cnstr
-  const bool use_rates = false; //see note in cnstr
+
+  //TODO cleanup: I don't think we need this test, it is being done in the SparseMatrixMultiplicationSafe class
+  const double left_stochastic_tol = 1e-12; //this should be the same as in SparseMatrixMultiplicationSafe
 
   const TrioAdmixtureProportions admix_matrix;
   const TrioTransitionRates rate_matrix;
@@ -42,8 +44,9 @@ struct CoalescentEpoch
   const arma::umat initial_mapping;
 
   const arma::vec y; //observed statistics
-  const arma::mat B; //bootstrap precision of y
+  const arma::sp_mat B; //bootstrap precision of y
   const arma::mat A; //admixture proportions
+  const arma::mat M; //demographic parameters
   const double t; //duration of epoch
 
   arma::vec y_hat;
@@ -55,8 +58,8 @@ struct CoalescentEpoch
 
   CoalescentEpoch (
       arma::mat& _states,
-      const arma::mat& _y, 
-      const arma::mat& _B,
+      const arma::vec& _y, 
+      const arma::sp_mat& _B,
       const arma::mat& _M,
       const arma::mat& _A,
       const double& _t,
@@ -73,6 +76,8 @@ struct CoalescentEpoch
     , initial_mapping (_initial_mapping)
     , y (_y)
     , B (_B)
+    , A (_A)
+    , M (_M)
     , t (_t)
   {
     /* 
@@ -103,16 +108,15 @@ struct CoalescentEpoch
         Rcpp::stop(prefix + "Epoch duration must be positive");
       }
 
-      if (arma::any(arma::abs(arma::sum(_states, 0) - 1.0) > _states.n_rows*arma::datum::eps))
-      {
-        Rcpp::stop(prefix + "State probability vector does not sum to one");
-      }
-
-      if (arma::any(arma::vectorise(_states) < 0.0))
-      {
-        // TODO: wrap matrix exponential in iterative step length thing
-        Rcpp::stop(prefix + "Negative state probabilities, use shorter step length for integration");
-      }
+      //these checks are now done in SparseMatrixExponentialMultiply
+      //if (arma::any(arma::abs(arma::sum(_states, 0) - 1.0) > left_stochastic_tol))
+      //{
+      //  Rcpp::stop(prefix + "State probability vector does not sum to one");
+      //}
+      //if (arma::any(arma::vectorise(_states) < 0.0))
+      //{
+      //  Rcpp::stop(prefix + "Negative state probabilities, use shorter step length for integration");
+      //}
     }
 
     unsigned num_emission = emission_mapping.n_cols;
@@ -123,7 +127,8 @@ struct CoalescentEpoch
     _states = admix_matrix.X * _states;
 
     // Transition probabilities
-    SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), _states, t);
+    //DELETEME SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), _states, t);
+    SparseMatrixExponentialMultiplySafe transition (arma::trans(rate_matrix.X), _states, t);
     _states = transition.result;
 
     // Fitted rates
@@ -230,9 +235,10 @@ struct CoalescentEpoch
 
     // Gradient wrt starting state vectors, trio rate matrix
     // (this adds gradient contribution to existing d_states)
-    SparseMatrixExponentialMultiply transition (
+    //DELETEME SparseMatrixExponentialMultiply transition (
+    SparseMatrixExponentialMultiplySafe transition (
       arma::trans(rate_matrix.X), admix_matrix.X * states, t);
-    arma::mat tmp = arma::zeros(arma::size(_states));
+    arma::mat tmp;
     arma::sp_mat d_rate_matrix = 
       transition.reverse_differentiate(tmp, _states); 
     _states = tmp;
@@ -277,108 +283,32 @@ struct CoalescentDecoder
   const std::string prefix = "[CoalescentDecoder] ";
   const bool check_valid = true;
   const bool use_marginal_statistics = true; //see notes in method coalescence_rate
-  const bool use_rates = false; //divide coalescence probabilities by time
 
   const unsigned P; //number of populations
   const unsigned T; //number of epochs
+  const arma::vec t; // epoch duration
   const TrioTransitionRates rate_matrix_template;
   const arma::umat emission_mapping;
   const arma::umat state_mapping;
   const arma::umat initial_mapping;
 
-  arma::mat y; // input statistics
-  arma::cube B; // bootstrap precision
-  arma::vec t; // epoch duration
+  //arma::mat y; // input statistics
+  //arma::cube B; // bootstrap precision
 
   // constructor with no input data
   CoalescentDecoder (
-      const unsigned _P, 
+      const unsigned& _P, // number of populations
       const arma::vec& _t, // epoch duration
       const bool _check_valid = true
   ) : check_valid (_check_valid)
     , P (_P)
     , T (_t.n_elem)
+    , t (_t)
     , rate_matrix_template (arma::ones(_P, _P))
     , emission_mapping (rate_matrix_template.emission_to_initial())
     , state_mapping (rate_matrix_template.states_to_emission())
     , initial_mapping (rate_matrix_template.initial_to_states())
-  {
-    t = _t;
-    y = arma::mat(emission_mapping.n_cols, T, arma::fill::zeros);
-    B = arma::cube(y.n_rows, y.n_rows, T, arma::fill::zeros);
-  }
-
-  // constructor with input data
-  CoalescentDecoder (
-      const unsigned _P, 
-      const arma::cube& _y, // number lineages coalescing in interval
-      const arma::mat& _n, // number lineages 
-      const arma::vec& _t, // epoch duration
-      const bool _check_valid = true
-  ) : check_valid (_check_valid)
-    , P (_P)
-    , T (_t.n_elem)
-    , rate_matrix_template (arma::ones(_P, _P))
-    , emission_mapping (rate_matrix_template.emission_to_initial())
-    , state_mapping (rate_matrix_template.states_to_emission())
-    , initial_mapping (rate_matrix_template.initial_to_states())
-  {
-    if (_y.n_rows != emission_mapping.n_cols || _y.n_cols != T)
-    {
-      Rcpp::stop(prefix + " dimension of 'y' does not match");
-    }
-    if (_n.n_rows != emission_mapping.n_cols || _n.n_cols != _y.n_slices)
-    {
-      Rcpp::stop(prefix + " dimension of 'n' does not match");
-    }
-
-    // epoch durations
-    t = _t;
-
-    // convert raw statistics to rates
-    arma::cube x (arma::size(_y));
-    for (unsigned i=0; i<_y.n_slices; ++i)
-    {
-      x.slice(i) = coalescence_rates(_y.slice(i), _n.col(i), _t, use_rates, use_marginal_statistics);
-    }
-
-    // observed statistics
-    y = x.slice(0);
-
-    // bootstrap precision matrices
-    // (use identity matrix if no bootstrap reps)
-    //
-    // TODO: re-evaluate strategy here. If inputs are small (they are)
-    // this should be internally rescaled. If there are a lot of pops, we may want
-    // to use a shrinkage approach, which would require implementing something separately.
-    // As a workaround for now, maybe add a separate constructor that allows B to be specified.
-    B = arma::cube(_y.n_rows, _y.n_rows, T, arma::fill::zeros);
-    unsigned num_boot = _y.n_slices - 1;
-    unsigned offset = emission_mapping.n_cols / 2;
-    for (unsigned i=0; i<T; ++i)
-    {
-      if (num_boot > 0)
-      {
-        arma::mat b = arma::zeros(num_boot, x.n_rows);
-        for (unsigned j = 0; j < num_boot; ++j)
-        {
-          b.row(j) = arma::trans(x.slice(j+1).col(i));
-        }
-        //<DEBUG> "disable" trio rates
-        auto pair_idx = arma::span(0, offset-1);//DEBUG
-        b = b.cols(pair_idx);//DEBUG
-        B.slice(i).submat(pair_idx, pair_idx) = arma::inv(arma::cov(b));//DEBUG
-        //<\DEBUG>
-        //B.slice(i) = arma::inv(arma::cov(b));
-      } else {
-        //<DEBUG> "disable" trio rates
-        auto pair_idx = arma::span(0, offset-1);//DEBUG
-        B.slice(i).submat(pair_idx, pair_idx).eye();
-        //<\DEBUG>
-        //B.slice(i).eye();
-      }
-    }
-  }
+  {}
 
   arma::mat coalescence_rates (const arma::mat& _y, const arma::vec& _n, const arma::vec& _t, const bool _use_rates = true, const bool _use_marginal_statistics = true)
   {
@@ -425,29 +355,19 @@ struct CoalescentDecoder
     return y;
   }
 
-  arma::mat observed_rates (void) const
+  std::vector<std::string> initial_states (const std::vector<std::string>& _names) const
   {
-    return y;
+    return rate_matrix_template.initial_states(_names);
   }
 
-  arma::cube precision_matrices (void) const
+  std::vector<std::string> emission_states (const std::vector<std::string>& _names) const
   {
-    return B;
+    return rate_matrix_template.emission_states(_names);
   }
 
-  std::vector<std::string> initial_states (void) const
+  std::vector<std::string> transitory_states (const std::vector<std::string>& _names) const
   {
-    return rate_matrix_template.initial_states();
-  }
-
-  std::vector<std::string> emission_states (void) const
-  {
-    return rate_matrix_template.emission_states();
-  }
-
-  std::vector<std::string> transitory_states (void) const
-  {
-    return rate_matrix_template.transitory_states();
+    return rate_matrix_template.transitory_states(_names);
   }
 
   arma::sp_mat transition_rates (const arma::mat& _M)
@@ -471,7 +391,7 @@ struct CoalescentDecoder
     return admix.X;
   }
 
-  arma::mat transition_operator (const mat& _X, const arma::mat& _M, const double& _t)
+  arma::mat transition_operator_unsafe (const mat& _X, const arma::mat& _M, const double& _t)
   {
     /*
      *  Map state probability vectors across duration, given demographic
@@ -479,6 +399,17 @@ struct CoalescentDecoder
      */
     TrioTransitionRates rates (_M, check_valid);
     SparseMatrixExponentialMultiply expm (arma::trans(rates.X), _X, _t);
+    return expm.result;
+  }
+
+  arma::mat transition_operator (const mat& _X, const arma::mat& _M, const double& _t)
+  {
+    /*
+     *  Map state probability vectors across duration, given demographic
+     *  parameters
+     */
+    TrioTransitionRates rates (_M, check_valid);
+    SparseMatrixExponentialMultiplySafe expm (arma::trans(rates.X), _X, _t);
     return expm.result;
   }
 
@@ -549,6 +480,12 @@ struct CoalescentDecoder
      *  Calculates a penalty on squared differences of a given order, for each
      *  demographic parameter. The differencing is done with respect to time
      *  and on a log10 scale.  Also calculates the gradient wrt the penalty.
+     *  Parameters that are are set to Inf or 0 are skipped. 
+     *
+     *  TODO: if there are splits and mergers involving the same populations,
+     *  then there will be "gaps" in the parameter trajectories. These gaps are
+     *  ignored; difference between parameter values at the beginning/end of gap
+     *  will be penalized!
      */
 
     if (_order == 0)
@@ -574,17 +511,18 @@ struct CoalescentDecoder
 
     arma::cube gradient_M (arma::size(_M), arma::fill::zeros);
 
-    // construct difference operator
-    arma::sp_mat diff = arma::speye(T, T);
-    for (unsigned i=0; i<_order; ++i)
-    {
-      arma::sp_mat d = -1.0 * arma::speye(diff.n_rows - 1, diff.n_rows);
-      for(unsigned j=0; j<d.n_rows; ++j)
-      {
-        d.at(j,j+1) = 1.0;
-      }
-      diff = d * diff;
-    }
+    // OLD using all values
+    //// construct difference operator
+    //arma::sp_mat diff = arma::speye(T, T);
+    //for (unsigned i=0; i<_order; ++i)
+    //{
+    //  arma::sp_mat d = -1.0 * arma::speye(diff.n_rows - 1, diff.n_rows);
+    //  for(unsigned j=0; j<d.n_rows; ++j)
+    //  {
+    //    d.at(j,j+1) = 1.0;
+    //  }
+    //  diff = d * diff;
+    //}
 
     // prior, gradient of prior wrt parameters
     double penalty = 0;
@@ -592,11 +530,51 @@ struct CoalescentDecoder
     {
       for (unsigned j=0; j<P; ++j)
       {
-        arma::vec diff_ij = diff * arma::log10(arma::vectorise(_M.tube(i,j)));
-        penalty += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(_penalty.at(i,j), 2));
-        diff_ij = -1. * diff_ij * std::pow(_penalty.at(i,j), 2);
-        gradient_M.tube(i,j) = diff.t() * diff_ij; 
-        gradient_M.tube(i,j) /= (_M.tube(i,j) * log(10));
+        arma::vec par_ij = arma::vectorise(_M.tube(i,j));
+        arma::vec gra_ij = arma::zeros(T);
+
+        // find valid parameter values
+        arma::uvec valid;
+        if (i == j) 
+        { 
+          valid = arma::find_finite(par_ij);
+        } else {
+          valid = arma::find(par_ij > 0.0);
+        }
+
+        if (valid.n_elem > 1)
+        {
+          // differencing operator
+          arma::sp_mat diff = arma::speye(valid.n_elem, valid.n_elem);
+          for (unsigned k=0; k<_order; ++k)
+          {
+            arma::sp_mat d = -1.0 * arma::speye(diff.n_rows - 1, diff.n_rows);
+            for(unsigned l=0; l<d.n_rows; ++l)
+            {
+              d.at(l,l+1) = 1.0;
+            }
+            diff = d * diff;
+          }
+
+          // Gaussian penalty
+          // TODO: should this include normalizing constant?
+          arma::vec diff_ij = diff * arma::log10(par_ij.elem(valid));
+          penalty += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(_penalty.at(i,j), 2));
+          //penalty += arma::accu(arma::log_normpdf(diff_ij, 0, _penalty.at(i,j)));
+
+          // gradient
+          diff_ij = -1. * diff_ij * std::pow(_penalty.at(i,j), 2);
+          gra_ij.elem(valid) = arma::trans(diff) * diff_ij;
+          gra_ij.elem(valid) /= (par_ij.elem(valid) * log(10));
+          gradient_M.tube(i,j) = gra_ij;
+        }
+
+        //OLD using all values
+        //arma::vec diff_ij = diff * arma::log10(arma::vectorise(_M.tube(i,j)));
+        //penalty += arma::accu(-0.5 * arma::pow(diff_ij, 2) * std::pow(_penalty.at(i,j), 2));
+        //diff_ij = -1. * diff_ij * std::pow(_penalty.at(i,j), 2);
+        //gradient_M.tube(i,j) = diff.t() * diff_ij; 
+        //gradient_M.tube(i,j) /= (_M.tube(i,j) * log(10));
       }
     }
 
@@ -606,21 +584,55 @@ struct CoalescentDecoder
         );
   }
 
-  Rcpp::List loglikelihood (arma::mat _X, const arma::cube& _M, const arma::cube& _A)
+  Rcpp::List expected_rates (const arma::mat& _X, const arma::cube& _M, const arma::cube& _A)
   {
     /*
      *  Calculate likelihood, gradient of migration and admixture parameters
      *  given starting state
      */
 
+    unsigned num_emissions = emission_mapping.n_cols;
+
+    arma::mat _y = arma::zeros(num_emissions, T);
+    std::vector<arma::sp_mat> _B (T);
+    for (unsigned i=0; i<T; ++i)
+    {
+      _B[i] = arma::speye(num_emissions, num_emissions);
+    }
+
+    Rcpp::List loglik = loglikelihood(_y, _B, _X, _M, _A);
+
+    return Rcpp::List::create(
+        Rcpp::_["X"] = loglik["X"], 
+        Rcpp::_["y"] = loglik["y_hat"]
+        );
+  }
+
+  Rcpp::List loglikelihood (const arma::mat& _y, const std::vector<arma::sp_mat>& _B, arma::mat _X, const arma::cube& _M, const arma::cube& _A)
+  {
+    /*
+     *  Calculate likelihood, gradient of migration and admixture parameters
+     *  given starting state
+     */
+
+    if (_y.n_cols != T)
+    {
+      Rcpp::stop(prefix + "Rate statistics matrix has the wrong dimensions");
+    }
+
+    if (_B.size() != T)
+    {
+      Rcpp::stop(prefix + "Precision matrix list is the wrong dimension");
+    }
+
     if (_M.n_slices != T)
     {
-      Rcpp::stop(prefix + "Demographic parameter array has wrong dimensions");
+      Rcpp::stop(prefix + "Demographic parameter array has the wrong dimensions");
     }
 
     if (_A.n_slices != T)
     {
-      Rcpp::stop(prefix + "Admixture parameter array has wrong dimensions");
+      Rcpp::stop(prefix + "Admixture parameter array has the wrong dimensions");
     }
 
     std::vector<CoalescentEpoch> epochs;
@@ -633,7 +645,7 @@ struct CoalescentDecoder
     for (unsigned i=0; i<T; ++i)
     {
       epochs.emplace_back(
-          _X, y.col(i), B.slice(i), _M.slice(i), _A.slice(i), t.at(i), 
+          _X, _y.col(i), _B[i], _M.slice(i), _A.slice(i), t.at(i), 
           emission_mapping, state_mapping, initial_mapping, check_valid
       );
       y_hat.col(i) = epochs[i].y_hat;
@@ -708,14 +720,16 @@ Rcpp::List test_SparseMatrixExponentialMultiply (arma::sp_mat A, arma::mat B, do
 // [[Rcpp::export]]
 Rcpp::List test_TrioTransitionRates (arma::mat M, arma::sp_mat G)
 {
+  std::vector<std::string> names (M.n_rows);
+  for (unsigned i=0; i<M.n_rows; ++i) names[i] = std::to_string(i);
   TrioTransitionRates rates (M);
   return Rcpp::List::create(
       Rcpp::_["matrix"] = rates.X,
       Rcpp::_["s_map_e"] = rates.states_to_emission(),
       Rcpp::_["i_map_s"] = rates.initial_to_states(),
       Rcpp::_["e_map_i"] = rates.emission_to_initial(),
-      Rcpp::_["emission_states"] = rates.emission_states(),
-      Rcpp::_["initial_states"] = rates.initial_states(),
+      Rcpp::_["emission_states"] = rates.emission_states(names),
+      Rcpp::_["initial_states"] = rates.initial_states(names),
       Rcpp::_["S"] = rates.S,
       Rcpp::_["reverse_differentiate"] = rates.reverse_differentiate(G)
   );
@@ -746,9 +760,9 @@ Rcpp::List test_CoalescentEpoch (arma::mat states, arma::mat M, arma::mat A, arm
 
   // get statistics
   arma::vec y = arma::ones(e_map.n_cols);
-  arma::mat P = arma::eye(e_map.n_cols, e_map.n_cols);
+  arma::sp_mat B = arma::speye(e_map.n_cols, e_map.n_cols);
 
-  CoalescentEpoch epoch (states, y, P, M, A, t, e_map, s_map, i_map, false);
+  CoalescentEpoch epoch (states, y, B, M, A, t, e_map, s_map, i_map, false);
   arma::cube gradient_M = epoch.reverse_differentiate(gradient);
 
   return Rcpp::List::create(
@@ -771,10 +785,7 @@ Rcpp::List test_CoalescentEpoch (arma::mat states, arma::mat M, arma::mat A, arm
 RCPP_MODULE(CoalescentDecoder) {
   using namespace Rcpp;
   class_<CoalescentDecoder>("CoalescentDecoder")
-    .constructor<unsigned, arma::cube, arma::mat, arma::vec, bool>()
     .constructor<unsigned, arma::vec, bool>()
-    .method("observed_rates", &CoalescentDecoder::observed_rates)
-    .method("precision_matrices", &CoalescentDecoder::precision_matrices)
     .method("initial_states", &CoalescentDecoder::initial_states)
     .method("emission_states", &CoalescentDecoder::emission_states)
     .method("transitory_states", &CoalescentDecoder::transitory_states)
@@ -782,9 +793,11 @@ RCPP_MODULE(CoalescentDecoder) {
     .method("admixture_proportions", &CoalescentDecoder::admixture_proportions)
     .method("coalescence_rates", &CoalescentDecoder::coalescence_rates)
     .method("transition_operator", &CoalescentDecoder::transition_operator)
+    .method("transition_operator_unsafe", &CoalescentDecoder::transition_operator_unsafe)
     .method("admixture_operator", &CoalescentDecoder::admixture_operator)
     .method("occupancy_probabilities", &CoalescentDecoder::occupancy_probabilities)
     .method("smoothness_penalty", &CoalescentDecoder::smoothness_penalty)
+    .method("expected_rates", &CoalescentDecoder::expected_rates)
     .method("loglikelihood", &CoalescentDecoder::loglikelihood)
     .method("initial_state_vectors", &CoalescentDecoder::initial_state_vectors)
     ;

@@ -28,6 +28,9 @@
 #include <string>
 #include <algorithm>
 
+// TODO incorporate names into emission/initial/transitory states
+// then can use these to order observed rates
+
 struct TrioTransitionRates
 {
   /*
@@ -95,21 +98,26 @@ struct TrioTransitionRates
     V.push_back(v);
   }
 
-  std::string initial_state (arma::uvec::fixed<3> initial) const
+  std::string initial_state (arma::uvec::fixed<3> initial, const std::vector<std::string>& names) const
   {
     /*
      *  Nonredundant population labelling of trio, "{u_1, u_2, u_3}"
      */
 
+    if (names.size() != P) Rcpp::stop(prefix + "Population names are not the correct length");
+
     std::sort(initial.begin(), initial.end());
     std::string out = "{";
-    out += std::to_string(initial[0]) + ",";
-    out += std::to_string(initial[1]) + ",";
-    out += std::to_string(initial[2]) + "}";
+    out += names[initial[0]] + ",";
+    out += names[initial[1]] + ",";
+    out += names[initial[2]] + "}";
+    //out += std::to_string(initial[0]) + ",";
+    //out += std::to_string(initial[1]) + ",";
+    //out += std::to_string(initial[2]) + "}";
     return out;
   }
 
-  std::vector<std::string> initial_states (void) const
+  std::vector<std::string> initial_states (const std::vector<std::string>& names) const
   {
     std::vector<std::string> out;
     arma::uvec::fixed<3> u;
@@ -119,21 +127,15 @@ struct TrioTransitionRates
       {
         for (u[2]=u[1]; u[2]<P; ++u[2])
         {
-          out.emplace_back(initial_state(u));
+          out.emplace_back(initial_state(u, names));
         }
       }
-    }
-
-    // assert that string array is sorted
-    if (!std::is_sorted(out.begin(), out.end()))
-    {
-      Rcpp::stop(prefix + " Initial states incorrectly named");
     }
 
     return out;
   }
 
-  std::string emission_state (const arma::uvec::fixed<3>& initial, const arma::uvec::fixed<3>& absorbing) const
+  std::string emission_state (const arma::uvec::fixed<3>& initial, const arma::uvec::fixed<3>& absorbing, const std::vector<std::string>& names) const
   {
     /*
      *  2-lineage states:
@@ -149,6 +151,8 @@ struct TrioTransitionRates
      *  Where 'u' is the starting state. The ordering of 'u' within the inner
      *  clade is always (min, max).
      */
+
+    if (names.size() != P) Rcpp::stop(prefix + "Population names are not the correct length");
 
     unsigned surviving_lineages = arma::accu(absorbing != P);
     if (arma::any(absorbing > P) || surviving_lineages == 0 || surviving_lineages == 3)
@@ -177,13 +181,16 @@ struct TrioTransitionRates
     u.head(2) = arma::sort(u.head(2));
     std::string out = 
       surviving_lineages == 2 ? "t1::((" : "t2::((";
-    out += std::to_string(u[0]) + ",";
-    out += std::to_string(u[1]) + "),";
-    out += std::to_string(u[2]) + ")";
+    //out += std::to_string(u[0]) + ",";
+    //out += std::to_string(u[1]) + "),";
+    //out += std::to_string(u[2]) + ")";
+    out += names[u[0]] + ",";
+    out += names[u[1]] + "),";
+    out += names[u[2]] + ")";
     return out;
   }
 
-  std::vector<std::string> emission_states (void) const
+  std::vector<std::string> emission_states (const std::vector<std::string>& names) const
   {
     std::vector<std::string> out;
     arma::uvec::fixed<3> u;
@@ -196,7 +203,7 @@ struct TrioTransitionRates
         for (u[2]=0; u[2]<P; ++u[2])
         {
           arma::uvec::fixed<3> v = {P, 0, 0}; 
-          out.emplace_back(emission_state(u, v));
+          out.emplace_back(emission_state(u, v, names));
         }
       }
     }
@@ -209,21 +216,15 @@ struct TrioTransitionRates
         for (u[2]=0; u[2]<P; ++u[2])
         {
           arma::uvec::fixed<3> v = {P, P, 0}; 
-          out.emplace_back(emission_state(u, v));
+          out.emplace_back(emission_state(u, v, names));
         }
       }
-    }
-
-    // assert that string array is sorted
-    if (!std::is_sorted(out.begin(), out.end()))
-    {
-      Rcpp::stop(prefix + " Emission states incorrectly named");
     }
 
     return out;
   }
 
-  std::vector<std::string> transitory_states (void) const
+  std::vector<std::string> transitory_states (const std::vector<std::string>& names) const
   {
     std::vector<std::string> out (arma::accu(S));
     arma::uvec::fixed<3> u;
@@ -235,11 +236,11 @@ struct TrioTransitionRates
         for (u[2]=0; u[2]<=P; ++u[2])
         {
           std::string name = "{";
-          name += u[0] == P ? "C" : std::to_string(u[0]);
+          name += u[0] == P ? "C" : names[u[0]]; //std::to_string(u[0]);
           name += ",";
-          name += u[1] == P ? "C" : std::to_string(u[1]);
+          name += u[1] == P ? "C" : names[u[1]]; //std::to_string(u[1]);
           name += ",";
-          name += u[2] == P ? "C" : std::to_string(u[2]);
+          name += u[2] == P ? "C" : names[u[2]]; //std::to_string(u[2]);
           name += "}";
           if (!arma::all(u == P))
           {
@@ -258,7 +259,15 @@ struct TrioTransitionRates
      *  Map from initial population labelling onto first compatible state
      */
 
-    std::vector<std::string> initial_names = initial_states();
+    std::vector<std::string> names (P);
+    for (unsigned i=0; i<P; ++i) names[i] = std::to_string(i);
+    std::vector<std::string> initial_names = initial_states(names);
+
+    // assert that string array is sorted
+    if (!std::is_sorted(initial_names.begin(), initial_names.end()))
+    {
+      Rcpp::stop(prefix + " Initial states incorrectly named");
+    }
 
     std::vector<arma::uword> col_indices;
     std::vector<arma::uword> row_indices;
@@ -275,7 +284,7 @@ struct TrioTransitionRates
           auto initial_index = std::lower_bound(
             initial_names.begin(), 
             initial_names.end(), 
-            initial_state(u)
+            initial_state(u, names)
           );
           col_indices.emplace_back(initial_index - initial_names.begin());
           row_indices.emplace_back(linear_index(u));
@@ -296,8 +305,20 @@ struct TrioTransitionRates
      *  Map from coalescent states onto emission states
      */
 
-    std::vector<std::string> initial_names = initial_states();
-    std::vector<std::string> emission_names = emission_states();
+    std::vector<std::string> names (P);
+    for (unsigned i=0; i<P; ++i) names[i] = std::to_string(i);
+    std::vector<std::string> initial_names = initial_states(names);
+    std::vector<std::string> emission_names = emission_states(names);
+
+    // assert that string arrays are sorted
+    if (!std::is_sorted(initial_names.begin(), initial_names.end()))
+    {
+      Rcpp::stop(prefix + " Initial states incorrectly named");
+    }
+    if (!std::is_sorted(emission_names.begin(), emission_names.end()))
+    {
+      Rcpp::stop(prefix + " Emission states incorrectly named");
+    }
 
     std::vector<arma::uword> col_indices;
     std::vector<arma::uword> row_indices;
@@ -316,7 +337,7 @@ struct TrioTransitionRates
           auto initial_index = std::lower_bound(
             initial_names.begin(), 
             initial_names.end(), 
-            initial_state(u)
+            initial_state(u, names)
           );
           if (initial_index == initial_names.end())
           {
@@ -337,11 +358,11 @@ struct TrioTransitionRates
                 auto emission_index = std::lower_bound(
                   emission_names.begin(), 
                   emission_names.end(), 
-                  emission_state(u, v)
+                  emission_state(u, v, names)
                 );
                 if (emission_index == emission_names.end())
                 {
-                  std::cout << "OOR: " << emission_state(u, v) << std::endl;
+                  std::cout << "OOR: " << emission_state(u, v, names) << std::endl;
                   Rcpp::stop(prefix + " Emission state out-of-range");
                 }
                 col_indices.emplace_back(initial_index - initial_names.begin());
@@ -363,11 +384,11 @@ struct TrioTransitionRates
               auto emission_index = std::lower_bound(
                 emission_names.begin(), 
                 emission_names.end(), 
-                emission_state(u, v)
+                emission_state(u, v, names)
               );
               if (emission_index == emission_names.end())
               {
-                std::cout << "OOR: " << emission_state(u, v) << std::endl;
+                std::cout << "OOR: " << emission_state(u, v, names) << std::endl;
                 Rcpp::stop(prefix + " Emission state out-of-range");
               }
               col_indices.emplace_back(initial_index - initial_names.begin());
@@ -394,8 +415,20 @@ struct TrioTransitionRates
      *  Indices of initial state associated with emission, and which coalescence event it is
      */
 
-    std::vector<std::string> initial_names = initial_states();
-    std::vector<std::string> emission_names = emission_states();
+    std::vector<std::string> names (P);
+    for (unsigned i=0; i<P; ++i) names[i] = std::to_string(i);
+    std::vector<std::string> initial_names = initial_states(names);
+    std::vector<std::string> emission_names = emission_states(names);
+
+    // assert that string arrays are sorted
+    if (!std::is_sorted(initial_names.begin(), initial_names.end()))
+    {
+      Rcpp::stop(prefix + " Initial states incorrectly named");
+    }
+    if (!std::is_sorted(emission_names.begin(), emission_names.end()))
+    {
+      Rcpp::stop(prefix + " Emission states incorrectly named");
+    }
 
     arma::umat out (2, emission_names.size());
     arma::uvec::fixed<3> u;
@@ -411,12 +444,12 @@ struct TrioTransitionRates
           auto initial_index = std::lower_bound(
               initial_names.begin(), 
               initial_names.end(), 
-              initial_state(u)
+              initial_state(u, names)
           );
           auto emission_index = std::lower_bound(
               emission_names.begin(), 
               emission_names.end(), 
-              emission_state(u, v)
+              emission_state(u, v, names)
           );
           out.at(0, emission_index - emission_names.begin()) = 
             initial_index - initial_names.begin();
@@ -436,12 +469,12 @@ struct TrioTransitionRates
           auto initial_index = std::lower_bound(
               initial_names.begin(), 
               initial_names.end(), 
-              initial_state(u)
+              initial_state(u, names)
           );
           auto emission_index = std::lower_bound(
               emission_names.begin(), 
               emission_names.end(), 
-              emission_state(u, v)
+              emission_state(u, v, names)
           );
           out.at(0, emission_index - emission_names.begin()) = 
             initial_index - initial_names.begin();

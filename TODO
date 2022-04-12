@@ -1,3 +1,9 @@
+# short term
+1. Finish PopulationTree reference class, add plotting functions, tests
+2. Bootstrap precision matrix
+3. Refactor main fitting function
+
+# longer term
 1. Streamlined rate calculation without using edge diffs
 2. Add active parameter detection: mask parameters where
   - demographic parameters are Inf (coalescence) or 0 (migration rates)

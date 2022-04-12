@@ -94,10 +94,6 @@ struct SparseMatrixExponentialMultiply
     {
       Rcpp::stop("[SparseMatrixExponentialMultiply] Gradient dimensions do not match rhs");
     }
-    if (dB.n_rows != _B.n_rows || dB.n_cols != _B.n_cols)  
-    {
-      Rcpp::stop("[SparseMatrixExponentialMultiply] Output dimensions do not match rhs");
-    }
     return _expm_multiply_simple_core_reverse_differentiate(dX, dB, _A, _Bs, _mu, _s, _t);
   }
 
@@ -307,36 +303,105 @@ struct SparseMatrixExponentialMultiply
       dF += dB;
     }
     //dmu = deta * eta * t/double(s);
-    dB_out += dF; //note that it is incremented!!!
+    dB_out = dF; //note that it is NOT incremented!!!
     dA -= spones(A); 
     return dA;
   }
 };
 
-// need to be able to set a step size, otherwise it'll blow up for large time intervals
-//struct SparseMatrixExponentialMultiplyStep
-//{
-//  const std::string prefix = "[SparseMatrixExponentialMultiplyStep] ";
-//  std::vector<SparseMatrixExponentialMultiply> mat_exp_step;
-//
-//  SparseMatrixExponentialMultiplyStep (
-//      const sp_mat& A, 
-//      const mat& B, 
-//      const double& t,
-//      const double step = 0.0) 
-//  {
-//    if (step < 0.0) Rcpp::stop(prefix + " Step length cannot be negative");
-//
-//    // chunk t by step
-//    
-//    // push back mat_exp
-//  }
-//
-//  void reverse_differentiate (?)
-//  {
-//    // loop back over mat exp and revdiff
-//
-//  }
-//};
+struct SparseMatrixExponentialMultiplySafe
+{
+  /*
+   *  Split matrix exponential multiply into intervals, adaptively choosing
+   *  the length of the interval. Assumes that the output should be left-stochastic.
+   */
+
+  // TODO:
+  //  - Do we need to renormalise at end so that output columns sum to 1?
+
+  const std::string prefix = "[SparseMatrixExponentialMultiplySafe] ";
+  const double step_reduction = std::sqrt(0.5); // should this be settable?
+
+  std::vector<SparseMatrixExponentialMultiply> mat_exp_mult;
+  mat result;
+  unsigned evals;
+
+  SparseMatrixExponentialMultiplySafe (
+      const sp_mat& A, 
+      const mat& B, 
+      const double& t,
+      const double tol = 1e-12, //gives equivalent or better accuracy than expm::expm
+      double step_min = 1.0e-4) 
+  {
+    if (t <= 0.0 || !std::isfinite(t))
+    {
+      Rcpp::stop(prefix + " Time step must be positive and finite");
+    }
+
+    if (step_min <= 0.0 || step_min > 1.0) 
+    {
+      Rcpp::stop(prefix + " Minimum step length must be in (0, 1]");
+    }
+
+    if (step_reduction <= 0.0 || step_reduction > 1.0) 
+    {
+      Rcpp::stop(prefix + " Step reduction factor must be in (0, 1]");
+    }
+
+    if (tol <= 0.0)
+    {
+      Rcpp::stop(prefix + " Convergence tolerance must be positive");
+    }
+
+    double step = t;
+    double total = 0;
+    unsigned n_steps = 0;
+    mat _B = B;
+    evals = 0;
+    do 
+    {
+      double t_step = std::min(t - total, step);
+
+      mat_exp_mult.emplace_back(A, _B, t_step);
+      auto last_eval = mat_exp_mult.back();
+      evals++;
+
+      if (_check_left_stochastic(last_eval.result, tol))
+      {
+        _B = last_eval.result;
+        total += t_step;
+        if (total > t) Rcpp::stop(prefix + "Interval exceeded");
+      } else {
+        mat_exp_mult.pop_back();
+        step *= step_reduction;
+        if (step < step_min * t) 
+        {
+          Rcpp::stop(prefix + "Minimum allowed step length reached");
+        }
+      } 
+    } while (total != t);
+
+    auto last_eval = mat_exp_mult.back();
+    result = last_eval.result;
+  }
+
+  bool _check_left_stochastic (const mat& x, const double& tol)
+  {
+    return all(vectorise(x) >= 0) && all(abs(sum(x, 0) - 1.0) <= tol);
+  }
+
+  sp_mat reverse_differentiate (mat& dB, const mat& dX)
+  {
+    sp_mat dA = spones(mat_exp_mult[0]._A);
+    dB = dX;
+    for (int i=mat_exp_mult.size()-1; i>=0; --i)
+    {
+      mat tmp_B;
+      dA += mat_exp_mult[i].reverse_differentiate(tmp_B, dB);
+      dB = tmp_B;
+    }
+    return dA - spones(mat_exp_mult[0]._A);
+  }
+};
 
 #endif

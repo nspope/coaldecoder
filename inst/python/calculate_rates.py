@@ -52,13 +52,15 @@ class ObservedTrioRates:
         else:
             assert isinstance(ts, tskit.TreeSequence)
 
-        assert isinstance(sample_sets, list)
-        for s in sample_sets:
+        assert isinstance(sample_sets, dict)
+        self.population_names = np.sort(list(sample_sets))
+        self.sample_sets = []
+        for name in self.population_names:
+            s = sample_sets[name]
             assert all([isinstance(i, int) for i in s])
             assert all([i in ts.samples() for i in s])
-        #TODO: more checks for sample_sets
-        self.sample_sets = sample_sets
-        self.num_populations = len(sample_sets)
+            self.sample_sets.append(s)
+        self.num_populations = len(self.sample_sets)
 
         #TODO:
         # what should time breaks instance be?
@@ -74,7 +76,7 @@ class ObservedTrioRates:
             assert random_seed >= 0
 
         if mask is not None:
-            #TODO checks for mask
+            assert isinstance(mask, np.ndarray)
             print(self.prefix + "Removing masked intervals from tree sequence")
             ts.delete_intervals(mask)
 
@@ -82,6 +84,7 @@ class ObservedTrioRates:
         assert threads > 0
 
         self.sequence_length = ts.sequence_length
+        self.num_trees = ts.num_trees
 
         # make pair indices
         self._pair_index = np.zeros((self.num_populations, self.num_populations), "int32")
@@ -90,16 +93,13 @@ class ObservedTrioRates:
         self._pair_linear_index = lambda i, j : self._pair_index[i, j]
 
         # check that sample times are all the same within a sample set
-        sample_times = [[ts.get_time(i) for i in s] for s in sample_sets]
-        for t in sample_times:
-            assert all([i == min(t) for i in t])
+        sample_times = [list({ts.get_time(i) for i in s}) for s in self.sample_sets]
+        assert all([len(t) == 1 for t in sample_times])
+        self.population_times = [t[0] for t in sample_times]
 
-        # update breaks to include sample times
-        sample_times = np.array([i for i in t for t in sample_times])
-        new_breaks = np.sort(np.unique(np.concatenate([sample_times, time_breaks])))
-        if len(new_breaks) != len(time_breaks):
-            print(self.prefix + "Updated time_breaks to include sampling times")
-        self.time_breaks = new_breaks
+        # check that time breaks include sample times
+        assert all([i in time_breaks for i in self.population_times])
+        self.time_breaks = time_breaks
 
         # TODO: allow user to provide start/end of genomic interval
         # calculate tree and block span
@@ -115,6 +115,8 @@ class ObservedTrioRates:
         ])
 
         # TODO: For lots of pops the size of the weights table will be huge. It could be a sparse matrix instead
+        # TODO: parallelize over blocks
+        # TODO: use edge diffs
         # calculate weights per block
         num_weights = 2*int(self.num_populations*self.num_populations*(self.num_populations+1)/2)
         num_time_breaks = len(self.time_breaks)
@@ -131,8 +133,7 @@ class ObservedTrioRates:
             norm_weights = weights.weights * tree_span[i]
             for j in range(len(weights.id)):
                 block_y[:, time_bin[j], block] += norm_weights[:, j]
-                for k in range(orig_bin[j], time_bin[j] + 1):
-                #for k in range(time_bin[j] + 1):
+                for k in range(time_bin[j] + 1):
                     block_n[:, k, block] += norm_weights[:, j]
 
         #TODO: progress bar
@@ -271,9 +272,9 @@ class ObservedTrioRates:
         trio_labels = []
         for t in ['t1::', 't2::']:
             for a, b in combn_replace(range(self.num_populations), 2):
-                pair_label = t + '((' + str(a) + ',' + str(b) + ')),'
+                pair_label = t + '((' + self.population_names[a] + ',' + self.population_names[b] + '),'
                 for c in range(self.num_populations):
-                    trio_labels += [pair_label + str(c) + ")"]
+                    trio_labels += [pair_label + self.population_names[c] + ")"]
         return trio_labels
 
     def denominator_labels (self):
@@ -282,8 +283,11 @@ class ObservedTrioRates:
             for a, b in combn_replace(range(self.num_populations), 2):
                 pair = [a, b]
                 for c in range(self.num_populations):
-                    trio = np.sort(pair + [c]) #if t == 't1::' else pair + [c]
-                    denominator_labels.append(t + "{" + str(trio[0]) + "," + str(trio[1]) + "," + str(trio[2]) + "}")
+                    u = np.sort(pair + [c]) #if t == 't1::' else pair + [c]
+                    denominator_labels.append(t + "{" + 
+                            self.population_names[u[0]] + "," + 
+                            self.population_names[u[1]] + "," + 
+                            self.population_names[u[2]] + "}")
         return denominator_labels
 
     def epochs (self):
@@ -304,6 +308,7 @@ class ObservedTrioRates:
         self.y_boot = self.y_boot*lhs_weight + rhs.y_boot*rhs_weight
         self.n_boot = self.n_boot*lhs_weight + rhs.n_boot*rhs_weight
         self.sequence_length = total_length
+        self.num_trees += rhs.num_trees
 
     def rates (self):
         rates = self.y[:,:-1] / self.n[:,:-1]
@@ -313,7 +318,6 @@ class ObservedTrioRates:
 
     def bootstrapped_rates (self):
         rates_boot = self.y_boot[:,:-1,:] / self.n_boot[:,:-1,:]
-        for i in range(rates.shape[1]):
+        for i in range(rates_boot.shape[1]):
             rates_boot[:,i,:] /= (self.time_breaks[i+1] - self.time_breaks[i])
         return rates_boot
-
