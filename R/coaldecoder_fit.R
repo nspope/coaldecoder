@@ -99,22 +99,25 @@ coaldecoder <- function(
   # L-BFGS-B with restarts
   fit <- optim(log10(demographic_parameters[parameter_mapping]), fn=obj, gr=gra, 
                lower=lower_bounds[parameter_mapping], upper=upper_bounds[parameter_mapping], method="L-BFGS-B")
+  .skip_to_end <- FALSE
   for(i in 1:max_restart)
   {
     if (fit$convergence == 0) 
     { 
       break
     } else if (fit$message == "NEW_X") {
-      tryCatch({
-        fit <- optim(fit$par, fn=obj, gr=gra, method="L-BFGS-B",
-                     lower=lower_bounds[parameter_mapping], upper=upper_bounds[parameter_mapping])
-        if (verbose) {
-          cat("L-BFGS-B restart:", i, "Deviance:", 2*fit$value, "\n")
-        }
+      fit <- tryCatch({
+          optim(fit$par, fn=obj, gr=gra, method="L-BFGS-B",
+                lower=lower_bounds[parameter_mapping], upper=upper_bounds[parameter_mapping])
       }, error = function(cond) {
-        warning("Optimization failed")
-        break
+          warning("Optimization failed")
+          .skip_to_end <<- TRUE
+          return(fit)
       })
+      if (.skip_to_end) break
+      if (verbose) {
+        cat("L-BFGS-B restart:", i, "Deviance:", 2*fit$value, "\n")
+      }
     } else {
       warning("Optimization failed")
       return(fit)
