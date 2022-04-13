@@ -16,7 +16,8 @@ coaldecoder <- function(
   upper_bounds = NULL,
   max_restart = 1000,
   verbose = TRUE,
-  calculate_hessian = FALSE)
+  calculate_hessian = FALSE,
+  holdout = NULL)
 {
   library(Matrix)
 
@@ -120,7 +121,7 @@ coaldecoder <- function(
       }
     } else {
       warning("Optimization failed")
-      return(fit)
+      break
     }
   }
 
@@ -137,11 +138,46 @@ coaldecoder <- function(
     std_error[parameter_mapping] <- sqrt(diag(solve(hessian)))
   }
 
+  # cross-validation score
+  cross_validation_score <- NA
+  if (!is.null(holdout))
+  {
+    rates_holdout <- holdout[[1]]
+    bootstrap_holdout <- holdout[[2]]
+    stopifnot(all(rownames(bootstrap_holdout) == rownames(rates_holdout)))
+    stopifnot(all(emission_names %in% rownames(rates_holdout)))
+    rate_mapping <- match(emission_names, rownames(rates_holdout))
+    rates_holdout <- rates_holdout[rate_mapping,,drop=FALSE]
+    bootstrap_holdout <- bootstrap_holdout[rate_mapping,,,drop=FALSE]
+
+    precision_matrices_holdout <- lapply(1:length(epoch_durations), function(i) 
+    {
+      # TODO: this is hacky. Better implement real checks.
+      out <- matrix(0, length(emission_names), length(emission_names))
+      boots <- t(bootstrap_holdout[,i,])
+      valid <- !is.na(rowMeans(boots))
+      stopifnot(sum(valid) > 3)
+      boots <- boots[valid,]
+      nonzero <- abs(colMeans(boots)) > nrow(boots)*.Machine$double.eps
+      if (any(nonzero))
+      {
+        out[nonzero, nonzero] <- precision_matrix_estimator(boots[,nonzero])
+      }
+      invalid <- is.na(rowMeans(out)) | is.infinite(rowMeans(out))
+      out[invalid,invalid] <- 0
+      as(out, "dgCMatrix")
+    })
+    lik_holdout <- decoder$loglikelihood(rates_holdout, precision_matrices_holdout, 
+      decoder$initial_state_vectors(), demographic_parameters, admixture_coefficients)
+    cross_validation_score <- -2 * lik_holdout$loglikelihood
+  }
+
   list(demographic_parameters=demographic_parameters,
        std_error=std_error,
        loglikelihood=-fit$value,
        optimizer=fit,
-       hessian=if(calculate_hessian) hessian else NULL)
+       hessian=if(calculate_hessian) hessian else NULL,
+       cross_validation_score=if(!is.null(holdout)) cross_validation_score else NULL)
 }
 
 #-----------------DEPRECATED API--------------------#
