@@ -105,11 +105,16 @@ coaldecoder <- function(
     { 
       break
     } else if (fit$message == "NEW_X") {
-      fit <- optim(fit$par, fn=obj, gr=gra, method="L-BFGS-B",
-                   lower=lower_bounds[parameter_mapping], upper=upper_bounds[parameter_mapping])
-      if (verbose) {
-        cat("L-BFGS-B restart:", i, "Deviance:", 2*fit$value, "\n")
-      }
+      tryCatch({
+        fit <- optim(fit$par, fn=obj, gr=gra, method="L-BFGS-B",
+                     lower=lower_bounds[parameter_mapping], upper=upper_bounds[parameter_mapping])
+        if (verbose) {
+          cat("L-BFGS-B restart:", i, "Deviance:", 2*fit$value, "\n")
+        }
+      }, error = function(cond) {
+        warning("Optimization failed")
+        break
+      })
     } else {
       warning("Optimization failed")
       return(fit)
@@ -132,6 +137,7 @@ coaldecoder <- function(
   list(demographic_parameters=demographic_parameters,
        std_error=std_error,
        loglikelihood=-fit$value,
+       optimizer=fit,
        hessian=if(calculate_hessian) hessian else NULL)
 }
 
