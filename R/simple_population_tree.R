@@ -47,7 +47,7 @@ initialize = function(topology, time_breaks, default_ne = 1e4, default_migration
   names(population_times) <- tree$tip.label
 
   # snap internal nodes to time_breaks
-  node_dist <- outer(node_depth, time_breaks, "-")
+  node_dist <- outer(node_depth, time_breaks[-length(time_breaks)], "-")
   node_epoch <- rep(NA, length(node_depth))
   node_is_internal <- rep(c(FALSE,TRUE), c(length(tree$tip.label), tree$Nnode))
   for (i in 1:nrow(node_dist))
@@ -86,7 +86,7 @@ initialize = function(topology, time_breaks, default_ne = 1e4, default_migration
   A <- array(0, c(length(tree$tip.label), length(tree$tip.label), length(time_breaks) - 1))
   rownames(M) <- colnames(M) <- rownames(A) <- colnames(A) <- tree$tip.label
   dimnames(M)[[3]] <- dimnames(A)[[3]] <- 
-    paste0("[", time_breaks[2:length(time_breaks)-1],",",time_breaks[2:length(time_breaks)],")")
+    paste0("[", time_breaks[2:length(time_breaks)-1], ",", time_breaks[2:length(time_breaks)], ")")
   for(i in 1:nrow(M)) { M[i,i,] <- 1/default_ne; A[i,i,] <- 1 }
 
   for (i in visit_order)
@@ -182,14 +182,11 @@ PopulationTree$methods(msprime_simulate = function(outfile, trees, sample_sizes,
 #------------------ Plotting functions -----------------------#
 PopulationTree$methods(plot_population_tree = function()
 {
-  plot(.tree, root.edge=TRUE, direction="leftwards")
+  plot(.tree, root.edge=TRUE)
   tree_depth <- max(ape::node.depth.edgelength(.tree))
-  axis(1, at=.breaks, labels=FALSE)
-  axis(1, at=range(.breaks), tick=FALSE, labels=range(.breaks))
-#for rightwards tree:
-#  offset <- max(tree_depth - max(.breaks), 0)
-#  axis(1, at=offset+.breaks, labels=FALSE)
-#  axis(1, at=range(offset+.breaks), tick=FALSE, labels=range(.breaks))#[2:1])
+  offset <- max(tree_depth - max(.breaks), 0)
+  axis(1, at=offset+.breaks, labels=FALSE)
+  axis(1, at=range(offset+.breaks), tick=FALSE, labels=range(.breaks)[2:1])
 })
 
 PopulationTree$methods(plot_expected_coalescence_rates = function(...)

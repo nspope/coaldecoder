@@ -64,13 +64,14 @@ struct CoalescentEpoch
       const arma::mat& _A,
       const double& _t,
       // mappings
+      const arma::sp_mat& _rate_matrix_template,
       const arma::umat& _emission_mapping,
       const arma::umat& _state_mapping,
       const arma::umat& _initial_mapping,
       const bool _check_valid = true
   ) : check_valid (_check_valid)
     , admix_matrix (_A, _check_valid)
-    , rate_matrix (_M, _check_valid)
+    , rate_matrix (_M, _rate_matrix_template, _check_valid)
     , emission_mapping (_emission_mapping)
     , state_mapping (_state_mapping)
     , initial_mapping (_initial_mapping)
@@ -292,10 +293,6 @@ struct CoalescentDecoder
   const arma::umat state_mapping;
   const arma::umat initial_mapping;
 
-  //arma::mat y; // input statistics
-  //arma::cube B; // bootstrap precision
-
-  // constructor with no input data
   CoalescentDecoder (
       const unsigned& _P, // number of populations
       const arma::vec& _t, // epoch duration
@@ -376,7 +373,7 @@ struct CoalescentDecoder
      *  Return trio transition rate matrix given demographic parameters
      */
 
-    TrioTransitionRates rates (_M, check_valid);
+    TrioTransitionRates rates (_M, rate_matrix_template.X, check_valid);
     return rates.X;
   }
 
@@ -645,7 +642,7 @@ struct CoalescentDecoder
     for (unsigned i=0; i<T; ++i)
     {
       epochs.emplace_back(
-          _X, _y.col(i), _B[i], _M.slice(i), _A.slice(i), t.at(i), 
+          _X, _y.col(i), _B[i], _M.slice(i), _A.slice(i), t.at(i), rate_matrix_template.X,
           emission_mapping, state_mapping, initial_mapping, check_valid
       );
       y_hat.col(i) = epochs[i].y_hat;
@@ -762,7 +759,7 @@ Rcpp::List test_CoalescentEpoch (arma::mat states, arma::mat M, arma::mat A, arm
   arma::vec y = arma::ones(e_map.n_cols);
   arma::sp_mat B = arma::speye(e_map.n_cols, e_map.n_cols);
 
-  CoalescentEpoch epoch (states, y, B, M, A, t, e_map, s_map, i_map, false);
+  CoalescentEpoch epoch (states, y, B, M, A, t, rate_matrix.X, e_map, s_map, i_map, false);
   arma::cube gradient_M = epoch.reverse_differentiate(gradient);
 
   return Rcpp::List::create(
@@ -800,5 +797,16 @@ RCPP_MODULE(CoalescentDecoder) {
     .method("expected_rates", &CoalescentDecoder::expected_rates)
     .method("loglikelihood", &CoalescentDecoder::loglikelihood)
     .method("initial_state_vectors", &CoalescentDecoder::initial_state_vectors)
+    ;
+  class_<SparseMatrixExponentialMultiplyRescale>("SpMatExp")
+    .constructor<arma::sp_mat, arma::mat, double>()
+    .field("B", &SparseMatrixExponentialMultiplyRescale::_B)
+    .field("Bs", &SparseMatrixExponentialMultiplyRescale::_Bs)
+    .field("m_star", &SparseMatrixExponentialMultiplyRescale::_m_star)
+    .field("mu", &SparseMatrixExponentialMultiplyRescale::_mu)
+    .field("t", &SparseMatrixExponentialMultiplyRescale::_t)
+    .field("s", &SparseMatrixExponentialMultiplyRescale::_s)
+    .field("A", &SparseMatrixExponentialMultiplyRescale::_A)
+    .field("result", &SparseMatrixExponentialMultiplyRescale::result)
     ;
 }

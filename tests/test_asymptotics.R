@@ -3,6 +3,9 @@
 # the example used is a big file, so we don't store it in this repo
 # it needs to be generated via 'python simulate_3pop_iid.py' and
 # 'python simulate_3pop_iid_ancient.py'
+#
+# python3 simulate_3pop_iid_ancient.py --samples 10 --trees 50000 --out asympt_iid_ancient_10x3.ts --seed 1024
+# python3 simulate_3pop_iid.py --samples 10 --trees 50000 --out asympt_iid_10x3.ts --seed 1024
 # -----------------------------------------------------------------------#
 
 library(coaldecoder)

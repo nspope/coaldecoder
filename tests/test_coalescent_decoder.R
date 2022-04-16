@@ -111,19 +111,16 @@ diag(M2) <- 10
 tol <- 1e-12
 
 # ensure we have a valid test
+# now i've fixed, should work great
 X2 <- deco$transition_operator_unsafe(foo$X, M2, 10000)
-test_2.1 <- !( all(X2 >= 0) & all(X2 <= 1) & all(abs(colSums(X2) - 1) <= tol) )
-
-# check safe implementation
-X3 <- deco$transition_operator(foo$X, M2, 10000)
-test_2.2 <- all(X3 >= 0) & all(X3 <= 1) & all(abs(colSums(X3) - 1) <= tol)
+stopifnot(all(X2 >= 0) & all(X2 <= 1) & all(abs(colSums(X2) - 1) <= tol))
 
 # check against external safe implementation
-X4 <- expm::expm(10000 * t(deco$transition_rates(M2))) %*% foo$X
-test_2.3 <- all(X4 >= 0) & all(X4 <= 1) & all(abs(colSums(X4) - 1) <= tol)
+X3 <- expm::expm(10000 * t(deco$transition_rates(M2))) %*% foo$X
+test_2.3 <- all(X3 >= 0) & all(X3 <= 1) & all(abs(colSums(X3) - 1) <= tol)
 
 # compare implementations
-test_2.4 <- all(abs(X4 - X3) <= tol)
+test_2.4 <- all(abs(X3 - X2) <= tol)
 
 stopifnot(all(c(test_2.1, test_2.2, test_2.3, test_2.4)))
 
