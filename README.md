@@ -31,17 +31,16 @@ obs_rates <- ObservedTrioRates(
   ts = "coaldecoder_example.ts", 
   sample_sets = sample_sets, 
   time_breaks = time_breaks,
-  bootstrap_replicates = 1000,
   bootstrap_blocks = 1000,
-  random_seed = 1,
   mask = NULL,
   threads = 1 #currently ignored
 )
 
-# extract rates and bootstraps from calculator
+# extract rates and bootstrap std deviation
 rates <- obs_rates$rates()
-boot_rates <- obs_rates$bootstrapped_rates()
-rownames(boot_rates) <- rownames(rates) <- obs_rates$emission_states()
+rates_sd <- obs_rates$std_dev(num_replicates=1000, random_seed=1)
+rownames(rates_sd) <- rownames(rates) <- obs_rates$emission_states()
+colnames(rates_sd) <- colnames(rates) <- obs_rates$epochs()
 
 # set up simple population tree (encoded as a Newick string)
 # where population "C" is sampled at 10000 generations in the past
@@ -52,7 +51,7 @@ pop_tree$plot_population_tree()
 # for each epoch given the constraints of the population tree
 fit <- coaldecoder(
   coalescence_rates=rates,
-  bootstrap_coalescence_rates=boot_rates,
+  bootstrap_precision=1/rates_sd,
   epoch_durations=pop_tree$epoch_durations(),
   demographic_parameters=pop_tree$demographic_parameters(), #starting values
   admixture_coefficients=pop_tree$admixture_coefficients(),
@@ -62,9 +61,11 @@ fit <- coaldecoder(
 # update model with fitted parameters and plot estimates
 pop_tree$set_demographic_parameters(fit$demographic_parameters)
 pop_tree$plot_demographic_parameters(time_scale=1000) + 
-  ggtitle("Demographic parameter estimates") -> model_plot
+  ggtitle("Demographic parameter estimates")
 pop_tree$plot_expected_coalescence_rates(observed=rates, time_scale=1000, log_transform=TRUE) + 
-  ggtitle("Fitted coalescence rates") -> rates_plot
+  ggtitle("Fitted coalescence rates")
+pop_tree$plot_occupancy_probabilities(time_scale=1000) +
+  ggtitle("Historical population occupancy")
 ```
 This produces plots of estimated demographic parameters (left), and fitted coalescence rates (right).
 Each panel of the left plot is the estimated trajectory for a demographic parameter, between the time it was sampled (point) and the time it merges with another population or hits the last epoch. **Inverse** effective

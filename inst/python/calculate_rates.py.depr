@@ -42,7 +42,7 @@ class ObservedTrioRates:
     sequence and optionally block-bootstraps these counts
     """
 
-    def __init__ (self, ts, sample_sets, time_breaks, bootstrap_blocks=1, trees_per_block=None, mask=None, threads=1):
+    def __init__ (self, ts, sample_sets, time_breaks, bootstrap_replicates=0, bootstrap_blocks=1, random_seed=None, mask=None, threads=1):
 
         self.prefix = "[CalculateTrioRates] "
 
@@ -65,15 +65,15 @@ class ObservedTrioRates:
         #TODO:
         # what should time breaks instance be?
 
-        if trees_per_block is not None:
-            assert trees_per_block > 0
-            bootstrap_blocks = ts.num_trees / trees_per_block
-
         bootstrap_blocks = int(bootstrap_blocks)
         assert bootstrap_blocks > 0
 
-        #TODO:
-        # alternatively specify trees_per_block
+        bootstrap_replicates = int(bootstrap_replicates)
+        assert bootstrap_replicates >= 0
+
+        if random_seed is not None:
+            random_seed = int(random_seed)
+            assert random_seed >= 0
 
         if mask is not None:
             assert isinstance(mask, np.ndarray)
@@ -90,7 +90,7 @@ class ObservedTrioRates:
         self._pair_index = np.zeros((self.num_populations, self.num_populations), "int32")
         for i, u in enumerate(combn_replace(np.arange(self.num_populations), 2)):
             self._pair_index[u[0], u[1]] = i
-        #self._pair_linear_index = lambda i, j : self._pair_index[i, j]
+        self._pair_linear_index = lambda i, j : self._pair_index[i, j]
 
         # check that sample times are all the same within a sample set
         sample_times = [list({ts.get_time(i) for i in s}) for s in self.sample_sets]
@@ -125,23 +125,40 @@ class ObservedTrioRates:
         for i, tree in enumerate(ts.trees()):
             block = tree_block[i]
             weights = self._trio_counts_for_tree(tree)
+            # we need to calculate the bin in which the event happens, and
+            # the earliest bin where the event *could* have happened
+            # the last bin in the arrays is a catchall for stuff beyond last epoch
             time_bin = np.searchsorted(self.time_breaks, weights.time, side='right') - 1
+            orig_bin = np.searchsorted(self.time_breaks, weights.min_time, side='right') - 1
             norm_weights = weights.weights * tree_span[i]
             for j in range(len(weights.id)):
                 block_y[:, time_bin[j], block] += norm_weights[:, j]
                 for k in range(time_bin[j] + 1):
                     block_n[:, k, block] += norm_weights[:, j]
 
-        # TODO: initialize all members here, not piecemeal
-        self.n = self._share_denominator_across_initial_states(block_n)
-        self.y = block_y
-        self.block_span = block_span
-        self.bootstrap_blocks = bootstrap_blocks
-        self.num_weights = num_weights
-        self.num_time_breaks = num_time_breaks
+        #TODO: progress bar
 
-    def _pair_linear_index (self, i, j):
-        return self._pair_index[i, j]
+        block_n = self._share_denominator_across_initial_states(block_n)
+
+        self.y = np.zeros((num_weights, num_time_breaks))
+        self.n = np.zeros((num_weights, num_time_breaks))
+        for block in range(bootstrap_blocks):
+            self.y[:,:] += block_y[:,:,block]
+            self.n[:,:] += block_n[:,:,block]
+
+        # bootstrap
+        rng = np.random.default_rng(random_seed)
+        self.y_boot = np.zeros((num_weights, num_time_breaks, bootstrap_replicates))
+        self.n_boot = np.zeros((num_weights, num_time_breaks, bootstrap_replicates))
+        for rep in range(bootstrap_replicates):
+            block_multiplier = rng.multinomial(
+                bootstrap_blocks, [1.0 / bootstrap_blocks] * bootstrap_blocks
+            )
+            block_weights = block_span * block_multiplier
+            block_weights /= np.sum(block_weights)
+            for block in range(bootstrap_blocks):
+                self.y_boot[:,:,rep] += block_weights[block]/block_span[block] * block_y[:,:,block]
+                self.n_boot[:,:,rep] += block_weights[block]/block_span[block] * block_n[:,:,block]
 
     def _trio_counts_for_tree (self, tree):
         """
@@ -266,7 +283,7 @@ class ObservedTrioRates:
             for a, b in combn_replace(range(self.num_populations), 2):
                 pair = [a, b]
                 for c in range(self.num_populations):
-                    u = np.sort(pair + [c])
+                    u = np.sort(pair + [c]) #if t == 't1::' else pair + [c]
                     denominator_labels.append(t + "{" + 
                             self.population_names[u[0]] + "," + 
                             self.population_names[u[1]] + "," + 
@@ -286,83 +303,21 @@ class ObservedTrioRates:
         lhs_weight = self.sequence_length / total_length
         rhs_weight = rhs.sequence_length / total_length
 
-        self.y = np.concatenate((self.y*lhs_weight, rhs.y*rhs_weight), axis=2)
-        self.n = np.concatenate((self.n*lhs_weight, rhs.n*rhs_weight), axis=2)
-        self.block_span = np.concatenate((self.block_span*lhs_weight, rhs.block_span*rhs_weight))
-
-        self.bootstrap_blocks += rhs.bootstrap_blocks
+        self.y = self.y*lhs_weight + rhs.y*rhs_weight
+        self.n = self.n*lhs_weight + rhs.n*rhs_weight
+        self.y_boot = self.y_boot*lhs_weight + rhs.y_boot*rhs_weight
+        self.n_boot = self.n_boot*lhs_weight + rhs.n_boot*rhs_weight
         self.sequence_length = total_length
         self.num_trees += rhs.num_trees
 
-    def numerator (self, block_weights = None):
-        if block_weights is None:
-            block_weights = np.ones((self.bootstrap_blocks))
-            block_weights /= np.sum(block_weights)
-        else:
-            assert len(block_weights) == self.bootstrap_blocks
-            assert np.all(block_weights >= 0.0)
-        y = np.zeros((self.num_weights, self.num_time_breaks))
-        for block in range(self.bootstrap_blocks):
-            y[:,:] += block_weights[block] * self.y[:,:,block]
-        return y[:,:-1]
-
-    def denominator (self, block_weights = None):
-        if block_weights is None:
-            block_weights = np.ones((self.bootstrap_blocks))
-            block_weights /= np.sum(block_weights)
-        else:
-            assert len(block_weights) == self.bootstrap_blocks
-            assert np.all(block_weights >= 0.0)
-        n = np.zeros((self.num_weights, self.num_time_breaks))
-        for block in range(self.bootstrap_blocks):
-            n[:,:] += block_weights[block] * self.n[:,:,block]
-        return n[:,:-1]
-
-    def rates (self, block_weights = None):
-        rates = self.numerator(block_weights) / self.denominator(block_weights)
-        for i in range(self.num_time_breaks - 1):
+    def rates (self):
+        rates = self.y[:,:-1] / self.n[:,:-1]
+        for i in range(rates.shape[1]):
             rates[:,i] /= (self.time_breaks[i+1] - self.time_breaks[i])
         return rates
 
-    def block_bootstrap (self, num_replicates, random_seed = None):
-        num_replicates = int(num_replicates)
-        assert num_replicates > 0
-
-        if random_seed is not None:
-            random_seed = int(random_seed)
-            assert random_seed >= 0
-
-        rng = np.random.default_rng(random_seed)
-        for rep in range(num_replicates):
-            block_multiplier = rng.multinomial(
-                self.bootstrap_blocks, [1.0 / self.bootstrap_blocks] * self.bootstrap_blocks
-            )
-            block_weights = self.block_span * block_multiplier
-            block_weights /= np.sum(block_weights)
-            rates = self.rates(block_weights / self.block_span)
-            yield rates
-
-    def std_dev (self, num_replicates, random_seed = None):
-        num_replicates = int(num_replicates)
-        assert num_replicates > 1
-
-        n = 0.0
-        mean = np.zeros((self.num_weights, self.num_time_breaks-1))
-        sumsq = np.zeros((self.num_weights, self.num_time_breaks-1))
-        for x in self.block_bootstrap(num_replicates, random_seed):
-            n += 1.0
-            delta = x - mean
-            mean += delta / n
-            delta *= x - mean
-            sumsq += delta
-        return np.sqrt(sumsq / (n - 1.0))
-
-    def bootstrapped_rates (self, num_replicates, random_seed = None):
-        num_replicates = int(num_replicates)
-        assert num_replicates > 0
-
-        rates = np.zeros((self.num_weights, self.num_time_breaks-1, num_replicates))
-        for i, x in enumerate(self.block_bootstrap(num_replicates, random_seed)):
-            rates[:,:,i] = x
-        return rates
-
+    def bootstrapped_rates (self):
+        rates_boot = self.y_boot[:,:-1,:] / self.n_boot[:,:-1,:]
+        for i in range(rates_boot.shape[1]):
+            rates_boot[:,i,:] /= (self.time_breaks[i+1] - self.time_breaks[i])
+        return rates_boot

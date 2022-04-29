@@ -32,9 +32,10 @@ struct CoalescentEpoch
   const std::string prefix = "[CoalescentEpoch] ";
   const bool check_valid = true;
   const bool use_marginal_statistics = true; //see note in cnstr
+  const bool log_rates = false; //use log(rates) in likelihood (precision must be calculated appropriately)
 
-  //TODO cleanup: I don't think we need this test, it is being done in the SparseMatrixMultiplicationSafe class
-  const double left_stochastic_tol = 1e-12; //this should be the same as in SparseMatrixMultiplicationSafe
+  //TODO this should depend on dimension of state vectors
+  const double left_stochastic_tol = 1e-12; 
 
   const TrioAdmixtureProportions admix_matrix;
   const TrioTransitionRates rate_matrix;
@@ -44,7 +45,7 @@ struct CoalescentEpoch
   const arma::umat initial_mapping;
 
   const arma::vec y; //observed statistics
-  const arma::sp_mat B; //bootstrap precision of y
+  const arma::vec B; //bootstrap sqrt(precision) of y
   const arma::mat A; //admixture proportions
   const arma::mat M; //demographic parameters
   const double t; //duration of epoch
@@ -59,7 +60,7 @@ struct CoalescentEpoch
   CoalescentEpoch (
       arma::mat& _states,
       const arma::vec& _y, 
-      const arma::sp_mat& _B,
+      const arma::vec& _B,
       const arma::mat& _M,
       const arma::mat& _A,
       const double& _t,
@@ -90,10 +91,9 @@ struct CoalescentEpoch
       Rcpp::stop(prefix + "Vector of rates has the wrong dimension");
     }
 
-    if (_B.n_rows != emission_mapping.n_cols ||
-        _B.n_cols != emission_mapping.n_cols )
+    if (_B.n_elem != emission_mapping.n_cols )
     {
-      Rcpp::stop(prefix + "Bootstrap precision matrix has the wrong dimension");
+      Rcpp::stop(prefix + "Bootstrap precision has the wrong dimension");
     }
 
     if (_states.n_rows != arma::accu(rate_matrix.S) || 
@@ -109,15 +109,14 @@ struct CoalescentEpoch
         Rcpp::stop(prefix + "Epoch duration must be positive");
       }
 
-      //these checks are now done in SparseMatrixExponentialMultiply
-      //if (arma::any(arma::abs(arma::sum(_states, 0) - 1.0) > left_stochastic_tol))
-      //{
-      //  Rcpp::stop(prefix + "State probability vector does not sum to one");
-      //}
-      //if (arma::any(arma::vectorise(_states) < 0.0))
-      //{
-      //  Rcpp::stop(prefix + "Negative state probabilities, use shorter step length for integration");
-      //}
+      if (arma::any(arma::abs(arma::sum(_states, 0) - 1.0) > left_stochastic_tol))
+      {
+        Rcpp::stop(prefix + "State probability vector does not sum to one");
+      }
+      if (arma::any(arma::vectorise(_states) < 0.0))
+      {
+        Rcpp::stop(prefix + "Negative state probabilities");
+      }
     }
 
     unsigned num_emission = emission_mapping.n_cols;
@@ -128,7 +127,8 @@ struct CoalescentEpoch
     _states = admix_matrix.X * _states;
 
     // Transition probabilities
-    //DELETEME SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), _states, t);
+    // TODO: this is *still* failing without safeguards
+    //SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), _states, t);
     SparseMatrixExponentialMultiplySafe transition (arma::trans(rate_matrix.X), _states, t);
     _states = transition.result;
 
@@ -179,9 +179,16 @@ struct CoalescentEpoch
     y_hat /= t;
 
     // Calculate loglikelihood
-    residual = y - y_hat;
-    gradient = B * residual;
-    loglikelihood = -0.5 * arma::dot(residual, gradient);
+    if (log_rates)
+    {
+      residual = B % (y - arma::log(y_hat));
+      gradient = B % residual / y_hat;
+      loglikelihood = -0.5 * arma::dot(residual, residual);
+    } else {
+      residual = B % (y - y_hat);
+      gradient = B % residual;
+      loglikelihood = -0.5 * arma::dot(residual, residual);
+    }
   }
 
   arma::cube reverse_differentiate (arma::mat& _states)
@@ -236,9 +243,8 @@ struct CoalescentEpoch
 
     // Gradient wrt starting state vectors, trio rate matrix
     // (this adds gradient contribution to existing d_states)
-    //DELETEME SparseMatrixExponentialMultiply transition (
-    SparseMatrixExponentialMultiplySafe transition (
-      arma::trans(rate_matrix.X), admix_matrix.X * states, t);
+    SparseMatrixExponentialMultiplySafe transition (arma::trans(rate_matrix.X), admix_matrix.X * states, t);
+    //SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), admix_matrix.X * states, t);
     arma::mat tmp;
     arma::sp_mat d_rate_matrix = 
       transition.reverse_differentiate(tmp, _states); 
@@ -262,21 +268,6 @@ struct CoalescentEpoch
 
     return d_parameters;
   }
-
-  //arma::cube forward_differentiate (arma::mat& _states)
-  //{
-  //  // want to calculate hessian if possible
-  //  // input: dll / dpar_i
-  //  // want to get: (dll / dpar_i) / dpar_j
-  //  // the tricky part is the matrix exponential
-  //  // in the forward pass:
-  //  //   parameters -> rate matrix -> matrix exponential multiply
-  //  //   drate_matrix/dparameter * dmatrix exponential multiply/drate_matrix
-  //  // so we need to be able to multiply by the *adjoint* of the jacobian for the expmat
-  //  // we'd also need to differentiate the jacobian of the expmet wrt other rate parameters
-  //  // this seems hard, let's pass for now
-  //  // it might be possible to use an autodiff library
-  //}
 };
 
 struct CoalescentDecoder
@@ -447,9 +438,12 @@ struct CoalescentDecoder
       }
       for (unsigned i=0; i<P; ++i)
       {
-        if (std::fabs(arma::accu(_A.col(i)) - 1.0) > _A.n_rows*arma::datum::eps)
+        for (unsigned j=0; j<T; j++)
         {
-          Rcpp::stop(prefix + "Admixture proportions do not sum to one");
+          if (std::fabs(arma::accu(_A.slice(j).col(i)) - 1.0) > _A.n_rows*arma::datum::eps)
+          {
+            Rcpp::stop(prefix + "Admixture proportions do not sum to one");
+          }
         }
       }
     }
@@ -461,8 +455,8 @@ struct CoalescentDecoder
       arma::mat rate_matrix = _M.slice(i);
       for (unsigned j=0; j<P; ++j)
       {
-        rate_matrix.at(i,i) = 0.;
-        rate_matrix.at(i,i) = -arma::accu(rate_matrix.row(i));
+        rate_matrix.at(j,j) = 0.;
+        rate_matrix.at(j,j) = -arma::accu(rate_matrix.row(j));
       }
       out.slice(i+1) = 
         arma::expmat(t.at(i) * arma::trans(rate_matrix)) * _A.slice(i) * out.slice(i);
@@ -591,11 +585,7 @@ struct CoalescentDecoder
     unsigned num_emissions = emission_mapping.n_cols;
 
     arma::mat _y = arma::zeros(num_emissions, T);
-    std::vector<arma::sp_mat> _B (T);
-    for (unsigned i=0; i<T; ++i)
-    {
-      _B[i] = arma::speye(num_emissions, num_emissions);
-    }
+    arma::mat _B = arma::ones(num_emissions, T);
 
     Rcpp::List loglik = loglikelihood(_y, _B, _X, _M, _A);
 
@@ -605,7 +595,7 @@ struct CoalescentDecoder
         );
   }
 
-  Rcpp::List loglikelihood (const arma::mat& _y, const std::vector<arma::sp_mat>& _B, arma::mat _X, const arma::cube& _M, const arma::cube& _A)
+  Rcpp::List loglikelihood (const arma::mat& _y, const arma::mat& _B, arma::mat _X, const arma::cube& _M, const arma::cube& _A)
   {
     /*
      *  Calculate likelihood, gradient of migration and admixture parameters
@@ -617,7 +607,7 @@ struct CoalescentDecoder
       Rcpp::stop(prefix + "Rate statistics matrix has the wrong dimensions");
     }
 
-    if (_B.size() != T)
+    if (_B.n_cols != T)
     {
       Rcpp::stop(prefix + "Precision matrix list is the wrong dimension");
     }
@@ -642,7 +632,7 @@ struct CoalescentDecoder
     for (unsigned i=0; i<T; ++i)
     {
       epochs.emplace_back(
-          _X, _y.col(i), _B[i], _M.slice(i), _A.slice(i), t.at(i), rate_matrix_template.X,
+          _X, _y.col(i), _B.col(i), _M.slice(i), _A.slice(i), t.at(i), rate_matrix_template.X,
           emission_mapping, state_mapping, initial_mapping, check_valid
       );
       y_hat.col(i) = epochs[i].y_hat;
@@ -757,7 +747,7 @@ Rcpp::List test_CoalescentEpoch (arma::mat states, arma::mat M, arma::mat A, arm
 
   // get statistics
   arma::vec y = arma::ones(e_map.n_cols);
-  arma::sp_mat B = arma::speye(e_map.n_cols, e_map.n_cols);
+  arma::vec B = arma::ones(e_map.n_cols);
 
   CoalescentEpoch epoch (states, y, B, M, A, t, rate_matrix.X, e_map, s_map, i_map, false);
   arma::cube gradient_M = epoch.reverse_differentiate(gradient);
@@ -808,5 +798,13 @@ RCPP_MODULE(CoalescentDecoder) {
     .field("s", &SparseMatrixExponentialMultiplyRescale::_s)
     .field("A", &SparseMatrixExponentialMultiplyRescale::_A)
     .field("result", &SparseMatrixExponentialMultiplyRescale::result)
+    .method("OpNormD", &SparseMatrixExponentialMultiplyRescale::OpNormD)
+    ;
+  class_<OneNormEst>("OneNormEst")
+    .constructor<arma::sp_mat, int, bool, bool>()
+    .field("est", &OneNormEst::_est)
+    .field("w", &OneNormEst::_w)
+    .field("v", &OneNormEst::_v)
+    .field("iter", &OneNormEst::_iter)
     ;
 }

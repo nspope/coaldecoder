@@ -25,6 +25,7 @@
 
 #include <RcppArmadillo.h> 
 #include <map>
+#include <string>
 
 // C++ implementation based on:
 // https://github.com/scipy/scipy/blob/v1.8.0/scipy/sparse/linalg/_expm_multiply.py#L56-L142
@@ -33,8 +34,206 @@
 
 using namespace arma;
 
+struct OneNormEst
+{
+  /*
+   *  Calculate 1-norm of power of sparse matrix, exactly or approximately
+   */
+
+  const std::string prefix = "[OneNormEst] ";
+  const double eps = 4 * datum::eps;
+  const unsigned iter_max = 10;
+
+  ivec _v;
+  vec _w;
+  uword _iter;
+  double _est;
+
+  OneNormEst (const sp_mat& A, const int p=0, const bool verbose=false, const bool approximate=true)  
+  {
+    //compute exact if !approximate or condition met?
+    _est = approximate ? approximate_norm(A, p, verbose) : exact_norm(A, p, verbose);
+  }
+
+  double exact_norm (const sp_mat& A, const int p, const bool verbose)
+  {
+    mat I = eye(A.n_rows, A.n_rows);
+    for (unsigned i = 0; i<p; ++i)
+    {
+      I *= A;
+    }
+    return norm(I, 1);
+  }
+
+  mat A_x (const sp_mat& A, mat X, const int p)
+  {
+    for (unsigned i=0; i<p; ++i)
+    {
+      X = A * X;
+    }
+    return X;
+  }
+
+  mat At_x (const sp_mat& A, mat X, const int p)
+  {
+    for (unsigned i=0; i<p; ++i)
+    {
+      X = arma::trans(A) * X;
+    }
+    return X;
+  }
+
+  double approximate_norm (const sp_mat& A, const int p, const bool verbose)
+  {
+    uword n = A.n_rows;
+    uword t = std::min(int(n), 5);
+
+    if (A.n_rows != A.n_cols)
+    {
+      Rcpp::stop(prefix + "Matrix must be square");
+    }
+
+    if (t < 1 || iter_max < 1) Rcpp::stop(prefix + "Invalid inputs");
+
+    mat X = randu(n, t); 
+    X.each_col([](vec& x) { x /= accu(x); });
+    uvec been_there = zeros<uvec>(n);
+    mat I_t = eye(t, t);
+    double est_old = 0.0;
+    double est = 0.0;
+    mat S = zeros(n, t);
+    mat S_old = S;
+    vec w = zeros(n);
+    uword imax;
+    unsigned iter;
+    for (iter=0; iter<iter_max+1; ++iter)
+    {
+      mat Y = A_x(A, X, p);
+      rowvec cY = sum(abs(Y), 0);
+      imax = cY.index_max();
+      est = cY[imax];
+      if (est > est_old || iter == 1)
+      {
+        w = Y.col(imax);
+      }
+      if (iter >= 1 && est < est_old)
+      {
+        est = est_old;
+        break;
+      }
+      est_old = est;
+      S_old = S;
+      if (iter == iter_max)
+      {
+        if (verbose)
+        {
+          Rcpp::Rcout << prefix << "Did not converge in " << iter_max << " iterations" << std::endl;
+        }
+        break;
+      }
+      S = sign(Y);
+      mat S_check = abs(trans(S_old) * S - n);
+      uvec partest (S_check.n_cols);
+      for (uword i=0; i<S_check.n_cols; ++i)
+      {
+        uvec check = find(S_check.col(i) < eps * n);
+        partest.at(i) = check.n_elem;
+      }
+      if (all(partest > 0))
+      {
+        if (verbose)
+        {
+          Rcpp::Rcout << prefix << "Hit a cycle (1), stopping iterations" << std::endl;
+        }
+        break;
+      }
+      if (any(partest > 0))
+      {
+        uvec check = find(partest > 0);
+        for (auto j : check)
+        {
+          S.col(j) = sign(randu(n) - 0.5);
+        }
+      }
+      S_check = trans(S) * S - I_t;
+      for (uword i=0; i<S_check.n_cols; ++i)
+      {
+        uvec check = find(S_check.col(i) == n);
+        partest.at(i) = check.n_elem;
+      }
+      if (any(partest > 0))
+      {
+        uvec check = find(partest > 0);
+        for (auto j : check)
+        {
+          S.col(j) = sign(randu(n) - 0.5);
+        }
+      }
+      mat Z = At_x(A, S, p);
+      mat h = abs(Z);
+      h.transform([](double x){ return(std::max(2.0, x)); });
+      uvec mhi (h.n_cols);
+      for (unsigned i=0; i<h.n_cols; ++i)
+      {
+        mhi[i] = h.col(i).index_max();
+      }
+      if (iter >= 1 && all(mhi == imax))
+      {
+        if (verbose)
+        {
+          Rcpp::Rcout << prefix << "Hit a cycle (2), stopping iterations" << std::endl;
+        }
+        break;
+      }
+      umat indmat (size(h));
+      for (unsigned i=0; i<h.n_cols; ++i)
+      {
+        indmat.col(i) = sort_index(h.col(i), "descend");
+        h.col(i) = sort(h.col(i), "descend");
+      }
+      uvec ind = vectorise(indmat);
+      if (t > 1)
+      {
+        uvec firstind = ind.head(t);
+        if (all(been_there.elem(firstind)))
+        {
+          break;
+        }
+        arma::uvec keep_ind = find(been_there.elem(ind) == 0);
+        ind = ind.elem(keep_ind);
+        if (ind.n_elem < t)
+        {
+          if (verbose)
+          {
+            Rcpp::Rcout << prefix << "Not enough new vectors, stopping iterations" << std::endl;
+          }
+          break;
+        }
+      }
+      X = zeros(n, t);
+      for (unsigned i=0; i<t; ++i)
+      {
+        X.at(ind[i], i) = 1.0;
+        been_there[ind[i]] = 1;
+      }
+    }
+
+    ivec v = zeros<ivec>(n);
+    v[imax] = 1;
+
+    _v = v;
+    _w = w;
+    _iter = iter;
+
+    return est;
+  }
+};
+
 struct SparseMatrixExponentialMultiply
 {
+  const std::string prefix = "[SparseMatrixExponentialMultiply] ";
+  const bool verbose = false;
+
   //private:
   std::map<int, double> _theta = {
     {1,2.29e-16},{2,2.58e-8},{3,1.39e-5},{4,3.40e-4},{5,2.40e-3},{6,9.07e-3},{7,2.38e-2},
@@ -84,6 +283,10 @@ struct SparseMatrixExponentialMultiply
       ivec frag = _fragment_3_1(operator_norm, _B.n_cols, _tol, 2);
       _m_star = frag[0];
       _s = frag[1];
+      if (_s < 1 || _m_star < 1)
+      {
+        Rcpp::stop(prefix + "Matrix exponential failed");
+      }
     }
     result = _expm_multiply_simple_core(_A, _B, _t, _mu, _m_star, _s, _tol, _Bs);
   }
@@ -108,6 +311,7 @@ struct SparseMatrixExponentialMultiply
     double _A_1_norm, _scale;
     int _ell;
     std::map<int, double> _d;
+    const bool _verbose = false;
   
     OperatorNorm (const sp_mat& A, double A_1_norm, int ell, double scale = 1.)
       : _A (A), _A_1_norm (A_1_norm), _ell (ell), _scale (scale)
@@ -115,12 +319,8 @@ struct SparseMatrixExponentialMultiply
 
     double norm_1_power (const sp_mat& A, int p)
     {
-      rowvec x = ones<rowvec>(A.n_rows);
-      for (int i=0; i<p; ++i)
-      {
-        x *= A;
-      }
-      return abs(x).max();
+      OneNormEst one_norm (A, p, _verbose, true);
+      return one_norm._est;
     }
   
     double norm_1 (void)
@@ -182,7 +382,7 @@ struct SparseMatrixExponentialMultiply
   {
     if (ell < 1) 
     {
-      Rcpp::stop("[SparseMatrixExponentialMultiply] ell < 1");
+      Rcpp::stop(prefix + "ell < 1");
     }
     int m_max  = 55;
     long int best_m = -1;
@@ -498,12 +698,14 @@ struct SparseMatrixExponentialMultiplyRescale
 
     double norm_1_power (const sp_mat& A, int p)
     {
-      rowvec x = ones<rowvec>(A.n_rows);
-      for (int i=0; i<p; ++i)
-      {
-        x *= A;
-      }
-      return abs(x).max();
+      //rowvec x = ones<rowvec>(A.n_rows);
+      //for (int i=0; i<p; ++i)
+      //{
+      //  x *= A;
+      //}
+      //return abs(x).max();
+      OneNormEst one_norm (A, p, true, true);
+      return one_norm._est;
     }
   
     double norm_1 (void)
@@ -531,6 +733,10 @@ struct SparseMatrixExponentialMultiplyRescale
   
   long double _compute_cost_div_m (int m, int p, OperatorNorm& operator_norm)
   {
+    std::cout << "_compute_cost_div_m" << std::endl;//DEBUG
+    std::cout << operator_norm.alpha(p) << " " << _theta[m] << std::endl;//DEBUG
+    std::cout << std::ceil(operator_norm.alpha(p) / _theta[m]) << std::endl;//DEBUG
+    std::cout << "/_compute_cost_div_m" << std::endl;//DEBUG
     return (long double)(std::ceil(operator_norm.alpha(p) / _theta[m]));
   }
   
