@@ -203,7 +203,7 @@
     stopifnot(length(epoch_durations)+1 == dim(occupancy)[3])
     stopifnot(all(epoch_durations > 0))
   } else {
-    epoch_durations <- rep(1, dim(occupancy)[3])
+    epoch_durations <- rep(1, dim(occupancy)[3] - 1)
   }
 
   epoch_start <- cumsum(c(0, epoch_durations))
