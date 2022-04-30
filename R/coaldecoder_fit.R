@@ -25,7 +25,8 @@ coaldecoder <- function(
   max_restart = 100,
   verbose = TRUE,
   calculate_hessian = FALSE,
-  holdout = NULL)
+  holdout = NULL,
+  debug_trace = FALSE)
 {
   library(Matrix)
 
@@ -86,6 +87,15 @@ coaldecoder <- function(
 
   obj <- function(x) {
     demographic_parameters[parameter_mapping] <- 10^x
+    if (debug_trace) #deleteme eventually
+    {
+      .coaldecoder_trace <<- list(demographic_parameters=demographic_parameters, 
+                                  admixture_coefficients=admixture_coefficients,
+                                  rates=coalescence_rates, 
+                                  precision=bootstrap_precision, 
+                                  state=state,
+                                  epoch_durations=epoch_durations)
+    }
     lik <- decoder$loglikelihood(coalescence_rates, bootstrap_precision,
              state, demographic_parameters, admixture_coefficients)
     prior <- decoder$smoothness_penalty(demographic_parameters, penalty, order=1)

@@ -38,6 +38,7 @@ struct OneNormEst
 {
   /*
    *  Calculate 1-norm of power of sparse matrix, exactly or approximately
+   *  TODO: approximation seems to cause problems occasionally. check against scipy implementation
    */
 
   const std::string prefix = "[OneNormEst] ";
@@ -312,6 +313,7 @@ struct SparseMatrixExponentialMultiply
     int _ell;
     std::map<int, double> _d;
     const bool _verbose = false;
+    const bool _approximate_norm = false; //DEBUG
   
     OperatorNorm (const sp_mat& A, double A_1_norm, int ell, double scale = 1.)
       : _A (A), _A_1_norm (A_1_norm), _ell (ell), _scale (scale)
@@ -319,7 +321,7 @@ struct SparseMatrixExponentialMultiply
 
     double norm_1_power (const sp_mat& A, int p)
     {
-      OneNormEst one_norm (A, p, _verbose, true);
+      OneNormEst one_norm (A, p, _verbose, _approximate_norm);
       return one_norm._est;
     }
   
