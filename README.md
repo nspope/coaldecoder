@@ -69,11 +69,13 @@ pop_tree$plot_expected_coalescence_rates(observed=rates, time_scale=1000, log_tr
 pop_tree$plot_occupancy_probabilities(time_scale=1000) +
   ggtitle("Inferred ancestry (population occupancy)")
 ```
-This produces plots of estimated demographic parameters, fitted coalescence rates, and the ancestry of lineages
-from the various populations through time. In the following, the estimated quantities are plotted alongside the
-truth (e.g. the model used for the simulation).
+This produces plots of the population tree and time discritization, the
+estimated demographic parameters, the fitted coalescence rates, and the
+ancestry of lineages from the various populations through time. Below, the
+estimated quantities are plotted alongside the truth (e.g. the model used for
+this simulated example).
 
-#### Tutorial: demographic parameter estimates
+#### Demographic parameter estimates
 Each panel is the estimated trajectory for a demographic parameter, between the
 time it was sampled (point) and the time it merges with another population or
 hits the last epoch. Migration rates are on the offdiagonal, and **inverse** effective
@@ -91,7 +93,7 @@ are/are not extant, e.g. which is made clear by the population tree:
 <img alt="Fitted" src="inst/example/coaldecoder_example_population_tree.png" width="45%">
 </p>
 
-#### Tutorial: fitted coalescence rates
+#### Fitted coalescence rates
 The panels show coalescence rates for the first and second coalescence events of a trio with a given population labelling.
 These rates are the "raw data" used by the method, and are calculated directly from the input tree sequence. The
 points are the observations, the lines are the expected rates under the fitted demographic model.
@@ -100,7 +102,7 @@ points are the observations, the lines are the expected rates under the fitted d
 <img alt="Fitted" src="inst/example/coaldecoder_example_true_rates.png" width="45%">
 </p>
 
-#### Tutorial: ancestry proportions
+#### Ancestry proportions
 The panels show ancestry probabilities throughout time for genomes sampled in each of the populations. These are the
 probability that a randomly selected site in the genome was in a given population at a given time in the past. For example,
 in the first panel, a genome sampled from population "A" is in population "A" at the present day (obviously). Moving into the
