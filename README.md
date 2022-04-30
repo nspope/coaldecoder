@@ -96,6 +96,7 @@ These rates are the "raw data" used by the method, and are calculated directly f
 points are the observations, the lines are the expected rates under the fitted demographic model.
 <p align="center">
 <img alt="Fitted" src="inst/example/coaldecoder_example_estimated_rates.png" width="45%">
+<img alt="Fitted" src="inst/example/coaldecoder_example_true_rates.png" width="45%">
 </p>
 
 #### Tutorial: ancestry proportions
@@ -113,14 +114,13 @@ Install dependencies:
 
 __python__
 - tskit (>=0.4.0)
-- msprime
+- msprime (>=1.0.0)
 - numpy
 - scipy
 
 __R__
 - reticulate
 - RcppArmadillo (>=0.10.6.0.0)
-- corpcor (optional, for non-diagonal bootstrap covariance matrices)
 - numDeriv (optional, for Hessian)
 - ggplot2 (optional, for plots)
 - dplyr (optional, for plots)
