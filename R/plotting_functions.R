@@ -180,3 +180,72 @@
 
   output
 }
+
+.plot_occupancy_probabilities <- function(
+  occupancy,
+  epoch_durations = NULL,
+  time_scale = 1)
+{
+  library(ggplot2)
+  library(dplyr)
+
+  stopifnot(length(dim(occupancy)) == 3)
+  stopifnot(all(occupancy >= 0))
+  stopifnot(nrow(occupancy) == ncol(occupancy))
+
+  if (is.null(rownames(occupancy))) 
+  {
+    rownames(occupancy) <- colnames(occupancy) <- 1:nrow(occupancy)-1
+  }
+
+  if (!is.null(epoch_durations))
+  {
+    stopifnot(length(epoch_durations)+1 == dim(occupancy)[3])
+    stopifnot(all(epoch_durations > 0))
+  } else {
+    epoch_durations <- rep(1, dim(occupancy)[3])
+  }
+
+  epoch_start <- cumsum(c(0, epoch_durations))
+
+  # to get last "step" to show up
+  popnames <- rownames(occupancy)
+  occupancy <- array(
+    c(occupancy, occupancy[,,length(epoch_durations)+1]),
+    dim=dim(occupancy) + c(0,0,1)
+  )
+  rownames(occupancy) <- colnames(occupancy) <- popnames
+
+  .melt(occupancy) %>%
+    dplyr::rename(epoch=Var3, pop1=Var1, pop2=Var2) %>% 
+    dplyr::mutate(
+      pop1_idx = pop1-1, 
+      pop2_idx = pop2-1,
+      pop1 = rownames(occupancy)[pop1],
+      pop2 = rownames(occupancy)[pop2],
+      parameter = paste0("O[", pop1_idx, ",", pop2_idx, "]"),
+      origin = paste0("Sampled in ", pop2),
+      time = epoch_start[epoch],
+    ) %>%
+    group_by(pop2) %>%
+    mutate(min_epoch_bound = min(epoch[value<1.0 & pop1 == pop2])) %>%
+    mutate(min_epoch = max(epoch[value==1.0 & pop1 == pop2 & epoch < min_epoch_bound])) %>%
+    group_by(parameter) %>%
+    filter(epoch >= min_epoch) -> occupancy_df
+
+  occupancy_df %>%
+  ggplot(aes(x=time/time_scale, group=parameter)) +
+    geom_step(aes(y = value, color=pop1)) +
+    geom_point(data=occupancy_df %>% filter(epoch == min_epoch & pop1 == pop2),
+               aes(y = value, group=parameter, color=pop1)) +
+    scale_y_continuous("Proportion of lineages", breaks=c(0,0.25,0.5,0.75,1.0)) +
+    xlab(if(time_scale == 1) "Time" else paste0("Time/", time_scale)) +
+    guides(color=guide_legend("Population")) +
+    facet_grid(~origin) +
+    theme_bw() + 
+    theme(panel.grid=element_blank(),
+          strip.background=element_blank(),
+          strip.text=element_text(face="bold")) -> occupancy_plot
+
+  occupancy_plot
+}

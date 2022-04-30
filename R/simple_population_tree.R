@@ -166,16 +166,29 @@ PopulationTree$methods(expected_coalescence_rates = function()
   rates
 })
 
+PopulationTree$methods(occupancy_probabilities = function()
+{
+  decoder <- CoalescentDecoder$new(length(population_names()), epoch_durations(), TRUE)
+  occupancy <- decoder$occupancy_probabilities(demographic_parameters(), admixture_coefficients())
+  rownames(occupancy) <- rownames(demographic_parameters())
+  colnames(occupancy) <- colnames(demographic_parameters())
+  occupancy
+})
+
 #------------------ Interface to msprime ---------------------#
-PopulationTree$methods(msprime_simulate = function(outfile, trees, sample_sizes, what=c("tree_sequence", "msprime_inputs"), random_seed=NULL)
+PopulationTree$methods(msprime_simulate = function(outfile, sample_sizes, chromosomes=1, chromosome_length=1e6, recombination_rate=1e-8, what=c("tree_sequence", "msprime_inputs"), random_seed=NULL)
 {
   what <- match.arg(what)
 
   reticulate::source_python(system.file("python", "simulate.py", package = "coaldecoder"))
 
-  msprime_simulate_iid (sample_sizes, population_sampling_times(), 
-                        demographic_parameters(), admixture_coefficients(), 
-                        epoch_durations(), trees, outfile, what, random_seed)
+  #msprime_simulate_iid (sample_sizes, population_sampling_times(), 
+  #                      demographic_parameters(), admixture_coefficients(), 
+  #                      epoch_durations(), trees, outfile, what, random_seed)
+  msprime_simulate (sample_sizes, population_sampling_times(), 
+                    demographic_parameters(), admixture_coefficients(), 
+                    epoch_durations(), chromosome_length, recombination_rate,
+                    chromosomes, outfile, what, random_seed)
 })
 
 
@@ -185,8 +198,8 @@ PopulationTree$methods(plot_population_tree = function()
   plot(.tree, root.edge=TRUE)
   tree_depth <- max(ape::node.depth.edgelength(.tree))
   offset <- max(tree_depth - max(.breaks), 0)
-  axis(1, at=offset+.breaks, labels=FALSE)
-  axis(1, at=range(offset+.breaks), tick=FALSE, labels=range(.breaks)[2:1])
+  axis(1, at=offset+.breaks, line=1, labels=FALSE)
+  axis(1, at=range(offset+.breaks), line=1, tick=FALSE, labels=range(.breaks)[2:1])
 })
 
 PopulationTree$methods(plot_expected_coalescence_rates = function(...)
@@ -197,4 +210,9 @@ PopulationTree$methods(plot_expected_coalescence_rates = function(...)
 PopulationTree$methods(plot_demographic_parameters = function(...)
 {
   .plot_demographic_parameters(parameters=demographic_parameters(), epoch_durations=epoch_durations(), ...)
+})
+
+PopulationTree$methods(plot_occupancy_probabilities = function(...)
+{
+  .plot_occupancy_probabilities(occupancy=occupancy_probabilities(), epoch_durations=epoch_durations(), ...)
 })

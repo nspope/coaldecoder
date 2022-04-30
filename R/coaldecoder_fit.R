@@ -1,7 +1,15 @@
-diagonal_precision <- function(x)
+smoothed_bootstrap_precision <- function(mean, sd)
 {
-  #Matrix::Diagonal(ncol(x), x = 1/apply(x, 2, var))
-  diag(1/apply(x, 2, var))
+  stopifnot(length(dim(mean)) == 2)
+  stopifnot(length(dim(sd)) == 2)
+  stopifnot(all(dim(mean) == dim(sd)))
+
+  df <- data.frame(x=log(c(mean)), y=log(c(sd)))
+  valid <- is.finite(df$x) & is.finite(df$y)
+  fit <- lm(y~x, data=df[valid,])
+  precision <- sd
+  precision[valid] <- exp(-fitted(fit))
+  precision
 }
 
 coaldecoder <- function(

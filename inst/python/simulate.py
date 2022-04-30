@@ -153,3 +153,136 @@ def msprime_simulate_iid (sample_sizes, pop_times, migr_mat, admix_mat, epoch_du
         ts = tables.tree_sequence()
         
         ts.dump(outfile)
+
+def msprime_simulate (sample_sizes, pop_times, migr_mat, admix_mat, epoch_dur, length, recombination_rate, num_chromosomes, outfile, save, random_seed = None):
+
+    # TODO: "iid" case above is special case of this function, clean up redundancy
+
+    assert save in ["tree_sequence", "msprime_inputs"]
+
+    #TODO: checks
+
+    num_pop = len(sample_sizes)
+    num_epoch = len(epoch_dur)
+
+    num_chromosomes = int(num_chromosomes)
+    if random_seed is not None:
+        random_seed = int(random_seed)
+
+    assert migr_mat.shape[0] == num_pop and migr_mat.shape[1] == num_pop and migr_mat.shape[2] == num_epoch
+    assert admix_mat.shape[0] == num_pop and admix_mat.shape[1] == num_pop and admix_mat.shape[2] == num_epoch
+    assert len(pop_times) == num_pop
+    assert length > 0
+    assert recombination_rate >= 0.0
+    assert num_chromosomes > 0
+
+    # sample configurations
+    populations = []
+    for p in range(num_pop):
+        populations += [msprime.PopulationConfiguration()]
+
+    samples = []
+    for p in range(num_pop):
+        for s in range(int(sample_sizes[p])):
+            samples += [(p, pop_times[p])]
+    
+    # demography
+    demography = []
+    t = 0
+    for e in range(num_epoch):
+        for i in range(num_pop):
+            for j in range(num_pop):
+                if i != j:
+                    demography += [msprime.MassMigration(
+                        time=t,
+                        source=j,
+                        dest=i,
+                        proportion=admix_mat[i,j,e],
+                    )]
+        for i in range(num_pop):
+            for j in range(num_pop):
+                if i == j and np.isfinite(migr_mat[i,j,e]):
+                    demography += [msprime.PopulationParametersChange(
+                        time=t,
+                        population=i, 
+                        initial_size=migr_mat[i,j,e]/2,
+                    )]
+                elif i != j:
+                    demography += [msprime.MigrationRateChange(
+                        time=t,
+                        matrix_index=(i, j), 
+                        rate=migr_mat[i,j,e],
+                    )]
+        t += epoch_dur[e]
+
+    if save == "msprime_inputs":
+        msprime_inputs = {
+            "demographic_events" : demography,
+            "samples" : samples,
+            "population_configurations" : populations,
+            "recombination_rate" : recombination_rate,
+            "length" : length,
+            "num_replicates" : num_chromosomes,
+            "random_seed" : random_seed,
+        }
+        pickle.dump(msprime_inputs, outfile)
+    elif save == "tree_sequence":
+        # simulation generator
+        ts_gen = msprime.simulate(
+          population_configurations=populations,
+          samples=samples,
+          demographic_events=demography,
+          recombination_rate=recombination_rate,
+          length=length,
+          num_replicates=num_chromosomes,
+          random_seed=random_seed,
+        )
+        
+        # initialize
+        ts = next(ts_gen)
+        tables = ts.dump_tables().asdict()
+        nodes = tables['nodes']
+        edges = tables['edges']
+        seq_offset = tables['sequence_length']
+        node_offset = len(nodes['flags'])
+        
+        # extract tables and offset values
+        for ts in ts_gen:
+            tables = ts.dump_tables().asdict()
+            nodes_flags = tables['nodes']['flags']
+            nodes_time = tables['nodes']['time'][nodes_flags==0]
+            nodes_offset = np.where(nodes_flags==0, node_offset - sum(nodes_flags==1), 0)
+            edges_left = tables['edges']['left'] + seq_offset
+            edges_right = tables['edges']['right'] + seq_offset
+            edges_parent = tables['edges']['parent']
+            edges_parent += nodes_offset[edges_parent]
+            edges_child = tables['edges']['child']
+            edges_child += nodes_offset[edges_child]
+            
+            # append to old table
+            nodes['flags'] = np.append(nodes['flags'], [0] * len(nodes_time))
+            nodes['time'] = np.append(nodes['time'], nodes_time)
+            edges['left'] = np.append(edges['left'], edges_left)
+            edges['right'] = np.append(edges['right'], edges_right)
+            edges['parent'] = np.append(edges['parent'], edges_parent)
+            edges['child'] = np.append(edges['child'], edges_child)
+            
+            # update offsets
+            seq_offset += tables['sequence_length']
+            node_offset += sum(nodes_flags==0)
+        
+        edge_sort = np.lexsort( (edges['left'], edges['child'], edges['parent'], nodes['time'][edges['parent']]) )
+        tables = tskit.TableCollection(sequence_length=seq_offset)
+        tables.nodes.set_columns(
+            time=nodes['time'],
+            flags=nodes['flags'].astype('uint32'),
+        )
+        tables.edges.set_columns(
+            left=edges['left'][edge_sort],
+            right=edges['right'][edge_sort],
+            parent=edges['parent'][edge_sort],
+            child=edges['child'][edge_sort],
+        )
+        ts = tables.tree_sequence()
+        
+        ts.dump(outfile)

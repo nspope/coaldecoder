@@ -26,22 +26,40 @@ pop_model <- PopulationTree$new("((A:30000,C:20000):10000,B:40000);", time_break
 pop_model$set_demographic_parameters(M)
 pop_model$plot_demographic_parameters(time_scale=1000) + ggtitle("True demographic parameters") -> true_model_plot
 pop_model$msprime_simulate(outfile="coaldecoder_example.ts", 
-                           sample_sizes=c(haps,haps,haps), trees=50000, 
+                           sample_sizes=c(haps,haps,haps), chromosomes=50000, 
+                           chromosome_length=1, recombination_rate=0,
                            random_seed=1024, what="tree_sequence")
 
+##------------- figures for github page
+#
 #pop_assign <- rep(1:num_pops-1, each=haps)
 #sample_sets <- lapply(1:num_pops-1, function(i) as.integer(which(pop_assign == i)-1)) 
 #names(sample_sets) <- LETTERS[1:num_pops]
 #true_obs_rates <- ObservedTrioRates("coaldecoder_example.ts", sample_sets, time_breaks)
-#
 #true_rates <- true_obs_rates$rates()
 #rownames(true_rates) <- true_obs_rates$emission_states()
-#pop_model$plot_expected_coalescence_rates(log_transform=TRUE, time_scale=1000) + 
-#  ggtitle("True vs simulated rates") -> true_obs_plot
-
-#png("../inst/example/coaldecoder_example_true.png", height=7, width=14, units="in", res=300)
-#cowplot::plot_grid(true_model, true_obs_plot)
-#dev.off()
-
-ggsave("../inst/example/coaldecoder_example_true.png", true_model_plot, height=7, width=7, units="in", dpi=300)
-
+#
+#pop_model$plot_demographic_parameters(time_scale=1000) + 
+#  ggtitle("True demographic parameters") + theme(text=element_text(family="Garamond")) -> one
+#pop_model$plot_expected_coalescence_rates(time_scale=1000, log_transform=TRUE) + 
+#  ggtitle("True coalescence rates")  + theme(text=element_text(family="Garamond")) -> two
+##pop_model$plot_occupancy_probabilities(time_scale=1000) +
+##  ggtitle("True ancestry (population occupancy)") -> three
+#.plot_occupancy_probabilities(pop_model$occupancy_probabilities(), pop_model$epoch_durations(), time_scale=1000) +
+#  ggtitle("True ancestry (population occupancy)") + theme(text=element_text(family="Garamond")) -> three
+#  ggsave("coaldecoder_example_true_parameters.png", one, height=7, width=7, units="in", dpi=300)
+#  ggsave("coaldecoder_example_true_rates.png", two, height=6, width=6, units="in", dpi=300)
+#  ggsave("coaldecoder_example_true_ancestry.png", three, height=3, width=9, units="in", dpi=300)
+#
+#  #fitted
+#pop_tree$plot_demographic_parameters(time_scale=1000) + 
+#  ggtitle("Demographic parameter estimates")  + theme(text=element_text(family="Garamond"))-> one
+#pop_tree$plot_expected_coalescence_rates(observed=rates, time_scale=1000, log_transform=TRUE) + 
+#  ggtitle("Observed & fitted coalescence rates")  + theme(text=element_text(family="Garamond"))-> two
+#pop_tree$plot_occupancy_probabilities(time_scale=1000) +
+#  ggtitle("Inferred ancestry (population occupancy)")  + theme(text=element_text(family="Garamond"))-> three
+#.plot_occupancy_probabilities(pop_tree$occupancy_probabilities(), pop_tree$epoch_durations(), time_scale=1000) +
+#  ggtitle("Inferred ancestry (population occupancy)")  + theme(text=element_text(family="Garamond"))-> three
+#  ggsave("coaldecoder_example_estimated_parameters.png", one, height=7, width=7, units="in", dpi=300)
+#  ggsave("coaldecoder_example_estimated_rates.png", two, height=6, width=6, units="in", dpi=300)
+#  ggsave("coaldecoder_example_estimated_ancestry.png", three, height=3, width=9, units="in", dpi=300)

@@ -12,7 +12,7 @@ The underlying model and input statistics are similar to those described in
 both first and second coalescence events from each trio, and allows population
 mergers and ancient samples.
 
-### Quick start
+### Tutorial
 ```r
 library(coaldecoder)
 reticulate::source_python(system.file("python", "calculate_rates.py", package = "coaldecoder"))
@@ -36,22 +36,24 @@ obs_rates <- ObservedTrioRates(
   threads = 1 #currently ignored
 )
 
-# extract rates and bootstrap std deviation
+# extract rates and bootstrap precision
 rates <- obs_rates$rates()
 rates_sd <- obs_rates$std_dev(num_replicates=1000, random_seed=1)
-rownames(rates_sd) <- rownames(rates) <- obs_rates$emission_states()
-colnames(rates_sd) <- colnames(rates) <- obs_rates$epochs()
+precision <- smoothed_bootstrap_precision(mean=rates, sd=rates_sd)
+rownames(rates) <- rownames(precision) <- obs_rates$emission_states()
+colnames(rates) <- colnames(precision) <- obs_rates$epochs()
 
 # set up simple population tree (encoded as a Newick string)
 # where population "C" is sampled at 10000 generations in the past
 pop_tree <- PopulationTree$new("((A:30000,C:20000):10000,B:40000);", time_breaks=time_breaks)
 pop_tree$plot_population_tree()
+# mergers are reverse alphabetical, e.g. here "C" merges into "A" at time 30000
 
 # estimate demographic parameters (e.g. Ne and migration rate trajectories)
 # for each epoch given the constraints of the population tree
 fit <- coaldecoder(
   coalescence_rates=rates,
-  bootstrap_precision=1/rates_sd,
+  bootstrap_precision=precision,
   epoch_durations=pop_tree$epoch_durations(),
   demographic_parameters=pop_tree$demographic_parameters(), #starting values
   admixture_coefficients=pop_tree$admixture_coefficients(),
@@ -61,30 +63,49 @@ fit <- coaldecoder(
 # update model with fitted parameters and plot estimates
 pop_tree$set_demographic_parameters(fit$demographic_parameters)
 pop_tree$plot_demographic_parameters(time_scale=1000) + 
-  ggtitle("Demographic parameter estimates")
+  ggtitle("Demographic parameter estimates") 
 pop_tree$plot_expected_coalescence_rates(observed=rates, time_scale=1000, log_transform=TRUE) + 
-  ggtitle("Fitted coalescence rates")
+  ggtitle("Observed & fitted coalescence rates")
 pop_tree$plot_occupancy_probabilities(time_scale=1000) +
-  ggtitle("Historical population occupancy")
+  ggtitle("Inferred ancestry (population occupancy)")
 ```
-This produces plots of estimated demographic parameters (left), and fitted coalescence rates (right).
-Each panel of the left plot is the estimated trajectory for a demographic parameter, between the time it was sampled (point) and the time it merges with another population or hits the last epoch. **Inverse** effective
-population sizes are on the diagonal; migration rates are on the offdiagonal. The panels of the right plot
-are coalescence rates for the first and second coalescence events of a trio with a given population labelling.
+This produces plots of estimated demographic parameters, fitted coalescence rates, and the ancestry of lineages
+from the various populations through time. In the following, the estimated quantities are plotted alongside the
+truth (e.g. the model used for the simulation).
+
+#### Tutorial: demographic parameter estimates
+Each panel is the estimated trajectory for a demographic parameter, between the
+time it was sampled (point) and the time it merges with another population or
+hits the last epoch. Migration rates are on the offdiagonal, and **inverse** effective
+population sizes are on the diagonal (inverse so that the y-scale is consistent across panels). 
+
+<p align="center">
+<img alt="Fitted" src="inst/example/coaldecoder_example_estimated_parameters.png" width="45%">
+</p>
+
+The "gaps" in the demographic parameter estimates reflect when populations
+are/are not extant, e.g. which is made clear by the population tree:
+
+<p align="center">
+<img alt="Fitted" src="inst/example/coaldecoder_example_population_tree.png" width="45%">
+</p>
+
+#### Tutorial: fitted coalescence rates
+The panels show coalescence rates for the first and second coalescence events of a trio with a given population labelling.
 These rates are the "raw data" used by the method, and are calculated directly from the input tree sequence. The
 points are the observations, the lines are the expected rates under the fitted demographic model.
 <p align="center">
-<img alt="Fitted" src="inst/example/coaldecoder_example_fitted.png" width="90%">
+<img alt="Fitted" src="inst/example/coaldecoder_example_estimated_rates.png" width="45%">
 </p>
 
-The "gaps" in the demographic parameter estimates reflect when populations are/are not extant, e.g. which is made clear by the population tree:
+#### Tutorial: ancestry proportions
+The panels show ancestry probabilities throughout time for genomes sampled in each of the populations. These are the
+probability that a randomly selected site in the genome was in a given population at a given time in the past. For example,
+in the first panel, a genome sampled from population "A" is in population "A" at the present day (obviously). Moving into the
+past, the probability that a lineage from this genome remains in "A" decreases, due to migration. This continues until the population
+mergers, where "B" and "C" merging into "A" ensure that the lineage ultimately returns to "A" at some point in the past.
 <p align="center">
-<img alt="Fitted" src="inst/example/coaldecoder_example_tree.png" width="45%">
-</p>
-
-Compare to the (goofy-looking) **true** demographic parameters (e.g. used to simulate data):
-<p align="center">
-<img alt="Fitted" src="inst/example/coaldecoder_example_true.png" width="45%">
+<img alt="Fitted" src="inst/example/coaldecoder_example_estimated_ancestry.png" width="90%">
 </p>
 
 ### Installation
