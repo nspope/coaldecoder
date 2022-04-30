@@ -81,6 +81,7 @@ population sizes are on the diagonal (inverse so that the y-scale is consistent 
 
 <p align="center">
 <img alt="Fitted" src="inst/example/coaldecoder_example_estimated_parameters.png" width="45%">
+<img alt="Fitted" src="inst/example/coaldecoder_example_true_parameters.png" width="45%">
 </p>
 
 The "gaps" in the demographic parameter estimates reflect when populations
@@ -107,6 +108,9 @@ past, the probability that a lineage from this genome remains in "A" decreases, 
 mergers, where "B" and "C" merging into "A" ensure that the lineage ultimately returns to "A" at some point in the past.
 <p align="center">
 <img alt="Fitted" src="inst/example/coaldecoder_example_estimated_ancestry.png" width="90%">
+</p>
+<p align="center">
+<img alt="Fitted" src="inst/example/coaldecoder_example_true_ancestry.png" width="90%">
 </p>
 
 ### Installation
