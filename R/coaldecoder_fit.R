@@ -154,7 +154,9 @@ coaldecoder <- function(
     #TODO: test that scoping works here, could default to commented-out part of 'gra' above
     hessian <- numDeriv::jacobian(function(x) {obj(x); gra(x)}, fit$par)
     hessian <- (hessian + t(hessian))/2
-    std_error[parameter_mapping] <- sqrt(diag(solve(hessian)))
+    try({
+      std_error[parameter_mapping] <- sqrt(diag(solve(hessian)))
+    })
   }
 
   # cross-validation score
