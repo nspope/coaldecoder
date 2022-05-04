@@ -24,6 +24,7 @@ coaldecoder <- function(
   state = NULL,
   max_restart = 100,
   verbose = TRUE,
+  control = list(),
   calculate_hessian = FALSE,
   holdout = NULL,
   debug_trace = FALSE)
@@ -116,7 +117,7 @@ coaldecoder <- function(
 
   #TODO: use a more modern implementation of L-BFGS-B
   # L-BFGS-B with restarts
-  fit <- optim(log10(demographic_parameters[parameter_mapping]), fn=obj, gr=gra, 
+  fit <- optim(log10(demographic_parameters[parameter_mapping]), fn=obj, gr=gra, control=control,
                lower=lower_bounds[parameter_mapping], upper=upper_bounds[parameter_mapping], method="L-BFGS-B")
   .coaldecoder_terminate <<- FALSE
   for(i in 1:max_restart)
@@ -126,7 +127,7 @@ coaldecoder <- function(
       break
     } else if (fit$message == "NEW_X") {
       fit <- tryCatch({
-          optim(fit$par, fn=obj, gr=gra, method="L-BFGS-B",
+          optim(fit$par, fn=obj, gr=gra, method="L-BFGS-B", control=control,
                 lower=lower_bounds[parameter_mapping], upper=upper_bounds[parameter_mapping])
       }, error = function(cond) {
           warning("Optimization failed")
@@ -152,7 +153,8 @@ coaldecoder <- function(
   if (calculate_hessian)
   {
     #TODO: test that scoping works here, could default to commented-out part of 'gra' above
-    hessian <- numDeriv::jacobian(function(x) {obj(x); gra(x)}, fit$par)
+    #hessian <- numDeriv::jacobian(function(x) {obj(x); gra(x)}, fit$par)
+    hessian <- optimHess(fit$par, fn=obj, gr=function(x) {obj(x); gra(x)}, control=control)
     hessian <- (hessian + t(hessian))/2
     try({
       std_error[parameter_mapping] <- sqrt(diag(solve(hessian)))
