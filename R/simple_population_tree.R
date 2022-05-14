@@ -176,19 +176,16 @@ PopulationTree$methods(occupancy_probabilities = function()
 })
 
 #------------------ Interface to msprime ---------------------#
-PopulationTree$methods(msprime_simulate = function(outfile, sample_sizes, chromosomes=1, chromosome_length=1e6, recombination_rate=1e-8, what=c("tree_sequence", "msprime_inputs"), random_seed=NULL)
+PopulationTree$methods(msprime_simulate = function(outfile, sample_sizes, chromosomes=1, chromosome_length=1e6, recombination_rate=1e-8, mutation_rate=0.0, what=c("tree_sequence", "msprime_inputs"), random_seed=NULL)
 {
   what <- match.arg(what)
 
   reticulate::source_python(system.file("python", "simulate.py", package = "coaldecoder"))
 
-  #msprime_simulate_iid (sample_sizes, population_sampling_times(), 
-  #                      demographic_parameters(), admixture_coefficients(), 
-  #                      epoch_durations(), trees, outfile, what, random_seed)
-  msprime_simulate (sample_sizes, population_sampling_times(), 
+  msprime_simulate (sample_sizes, population_sampling_times(), population_names(),
                     demographic_parameters(), admixture_coefficients(), 
                     epoch_durations(), chromosome_length, recombination_rate,
-                    chromosomes, outfile, what, random_seed)
+                    chromosomes, outfile, what, mutation_rate, random_seed)
 })
 
 

@@ -39,7 +39,7 @@ obs_rates <- ObservedTrioRates(
 # extract rates and bootstrap precision
 rates <- obs_rates$rates()
 rates_sd <- obs_rates$std_dev(num_replicates=1000, random_seed=1)
-precision <- smoothed_bootstrap_precision(mean=rates, sd=rates_sd)
+precision <- smoothed_bootstrap_precision(mean=rates, sd=rates_sd, method="lm")
 rownames(rates) <- rownames(precision) <- obs_rates$emission_states()
 colnames(rates) <- colnames(precision) <- obs_rates$epochs()
 
@@ -57,6 +57,7 @@ fit <- coaldecoder(
   epoch_durations=pop_tree$epoch_durations(),
   demographic_parameters=pop_tree$demographic_parameters(), #starting values
   admixture_coefficients=pop_tree$admixture_coefficients(),
+  control=list(lmm=50), #see ?optim
   penalty=matrix(3, 3, 3) #smoothing penalty
 )
 

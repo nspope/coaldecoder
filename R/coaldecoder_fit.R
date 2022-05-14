@@ -1,14 +1,43 @@
-smoothed_bootstrap_precision <- function(mean, sd)
+smoothed_bootstrap_precision <- function(mean, sd, denominator=NULL, method=c('none', 'lm', 'gam'))
 {
+  #'
+  #' Get a (potentially smoothed) estimate of the precision of the observed coalescence rates
+  #'
+
+  library(mgcv)
+  
+  method <- match.arg(method)
+
   stopifnot(length(dim(mean)) == 2)
   stopifnot(length(dim(sd)) == 2)
   stopifnot(all(dim(mean) == dim(sd)))
 
-  df <- data.frame(x=log(c(mean)), y=log(c(sd)))
+  if (method=='gam')
+  {
+    stopifnot(!is.null(denominator))
+    stopifnot(length(dim(denominator)) == 2)
+    stopifnot(all(dim(denominator) == dim(sd)))
+  } else {
+    denominator <- array(NA, dim(sd))
+  }
+
+  df <- data.frame(x=log(c(mean)), y=log(c(sd)), n=sqrt(c(denominator)), t=factor(1:nrow(mean)))
   valid <- is.finite(df$x) & is.finite(df$y)
-  fit <- lm(y~x, data=df[valid,])
   precision <- sd
-  precision[valid] <- exp(-fitted(fit))
+  if (method=='none')
+  {
+    precision[valid] <- 1/sd[valid]
+  }
+  else if (method=='lm')
+  {
+    fit <- lm(y~x, data=df[valid,])
+    precision[valid] <- exp(-fitted(fit))
+  }
+  else if (method=='gam')
+  {
+    fit <- mgcv::gamm(y~x+s(t, n, bs='fs', m=1), data=df[valid,])
+    precision[valid] <- exp(-fitted(fit$gam))
+  }
   precision
 }
 
@@ -157,6 +186,7 @@ coaldecoder <- function(
     hessian <- optimHess(fit$par, fn=obj, gr=function(x) {obj(x); gra(x)}, control=control)
     hessian <- (hessian + t(hessian))/2
     try({
+      #could use MASS::ginv to avoid singularity issues
       std_error[parameter_mapping] <- sqrt(diag(solve(hessian)))
     })
   }
@@ -167,18 +197,16 @@ coaldecoder <- function(
   {
     #TODO: clean this up
     rates_holdout <- holdout[[1]]
-    bootstrap_holdout <- holdout[[2]]
-    stopifnot(all(rownames(bootstrap_holdout) == rownames(rates_holdout)))
+    precision_holdout <- holdout[[2]]
+    stopifnot(all(rownames(precision_holdout) == rownames(rates_holdout)))
     stopifnot(all(emission_names %in% rownames(rates_holdout)))
     rate_mapping <- match(emission_names, rownames(rates_holdout))
     rates_holdout <- rates_holdout[rate_mapping,,drop=FALSE]
-    bootstrap_holdout <- bootstrap_holdout[rate_mapping,,,drop=FALSE]
+    precision_holdout <- precision_holdout[rate_mapping,,drop=FALSE]
     
-    bootstrap_precision_holdout <- 1./apply(bootstrap_holdout, c(1,2), sd)
-    bootstrap_precision_holdout <- ifelse(is.na(bootstrap_precision_holdout) | is.infinite(bootstrap_precision_holdout), 0, bootstrap_precision_holdout)
-    lik_holdout <- decoder$loglikelihood(rates_holdout, bootstrap_precision_holdout,
+    lik_holdout <- decoder$loglikelihood(rates_holdout, precision_holdout,
       state, demographic_parameters, admixture_coefficients)
-    cross_validation_score <- -2 * lik_holdout$loglikelihood
+    cross_validation_score <- -2.0 * lik_holdout$loglikelihood
   }
 
   decoder_fit <- decoder$expected_rates(state, demographic_parameters, admixture_coefficients)
@@ -195,6 +223,7 @@ coaldecoder <- function(
        precision=bootstrap_precision,
        state=decoder_fit$X,
        hessian=if(calculate_hessian) hessian else NULL,
+       smoothing_penalty=penalty,
        cross_validation_score=if(!is.null(holdout)) cross_validation_score else NULL)
 }
 

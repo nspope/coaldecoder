@@ -27,10 +27,10 @@
 #include <map>
 #include <string>
 
-// C++ implementation based on:
+// C++ implementation based off of:
 // https://github.com/scipy/scipy/blob/v1.8.0/scipy/sparse/linalg/_expm_multiply.py#L56-L142
-
-// reverse diff is by Nate Pope
+// <scipy.linalg.onenormest> TODO
+// Matrix::onenormest TODO
 
 using namespace arma;
 
@@ -43,9 +43,8 @@ struct OneNormEst
 
   const std::string prefix = "[OneNormEst] ";
   const double eps = 4 * datum::eps;
-  const unsigned iter_max = 10;
 
-  ivec _v;
+  vec _v;
   vec _w;
   uword _iter;
   double _est;
@@ -84,8 +83,13 @@ struct OneNormEst
     return X;
   }
 
-  double approximate_norm (const sp_mat& A, const int p, const bool verbose)
+  // ------- equivalent to `onenormest` in R::Matrix ------- //
+  
+  double approximate_norm (const sp_mat& A, const int p, const bool verbose, const unsigned iter_max = 10)
   {
+    // seems like this is problematic (produces incorrect results when hitting
+    // cycles), use alternate version
+    
     uword n = A.n_rows;
     uword t = std::min(int(n), 5);
 
@@ -219,7 +223,7 @@ struct OneNormEst
       }
     }
 
-    ivec v = zeros<ivec>(n);
+    vec v = zeros(n);
     v[imax] = 1;
 
     _v = v;
@@ -227,6 +231,257 @@ struct OneNormEst
     _iter = iter;
 
     return est;
+  }
+
+  // ------- equivalent to `onenormest` in python::scipy ------- //
+
+  double approximate_norm_alternate (const sp_mat& A, const int p, const bool verbose, const unsigned t = 2, const unsigned iter_max = 5)
+  {
+    // Higham and Tisseur 2000, Algorithm 2.4
+    
+    uword n = A.n_rows;
+
+    if (t >= n)
+    {
+      Rcpp::stop(prefix + "t >= n, use exact norm instead");
+    }
+
+    if (A.n_cols != n)
+    {
+      Rcpp::stop(prefix + "Matrix must be square");
+    }
+
+    if (iter_max < 2)
+    {
+      Rcpp::stop(prefix + "At least two iterations needed");
+    }
+
+    if (t < 1)
+    {
+      Rcpp::stop(prefix + "At least one column needed");
+    }
+
+    unsigned nmults = 0;
+    unsigned nresamples = 0;
+    // "We now explain our choice of starting matrix. We take the first
+    // column of X to be the vector of 1s [...] This has the advantage that
+    // for a matrix with nonnegative elements the algorithm converges
+    // with an exact estimate on the second iteration, and such matrices
+    // arise in applications [...]"
+    mat X = ones(n, t); 
+    mat Y = zeros(n, 0);
+    mat Z = zeros(n, 0);
+    mat S = zeros(n, 0);
+    mat S_old = zeros(n, 0);
+    vec h = zeros(0);
+    vec v;
+    vec w;
+
+    double est, est_old;
+
+    // "The remaining columns are chosen as rand{-1,1},
+    // with a check for and correction of parallel columns,
+    // exact as for S in the body of the algorithm."
+    if (t > 1)
+    {
+      for (uword i=1; i<t; ++i)
+      {
+        // These are technically initial samples, not resamples,
+        // so the resampling count is not incremented.
+        _resample_column(i, X);
+      }
+      for (uword i=0; i<t; ++i)
+      {
+        do
+        {
+          _resample_column(i, X);
+          nresamples++;
+        } while (_column_needs_resampling(i, X, Y));
+      }
+    }
+    // "Choose starting matrix X with columns of unit 1-norm."
+    X /= double(n);
+
+    est_old = 0.0;
+    int k = 1;
+    uword ind_best;
+    uvec ind = zeros<uvec>(0);
+    // "indices of used unit vectors e_j"
+    uvec ind_hist = zeros<uvec>(0);
+
+    do
+    {
+      Y = A_x(A, X, p);
+      nmults++;
+      rowvec mags = _sum_abs_axis0(Y);
+      est = mags.max();
+      uword best_j = mags.index_max();
+      if (est > est_old || k == 2)
+      {
+        if (k >= 2)
+        {
+          ind_best = ind(best_j);
+        }
+        w = Y.col(best_j);
+      }
+      // (1)
+      if (k >= 2 && est <= est_old)
+      {
+        est = est_old;
+        break;
+      }
+      est_old = est;
+      S_old = S;
+      if (k > iter_max) break;
+      S = _sign_round_up(Y);
+      Y.set_size(n, 0);
+      // (2)
+      if (_every_col_of_X_is_parallel_to_a_col_of_Y(S, S_old)) break;
+      if (t > 1)
+      {
+        // "Ensure that no column of S is parallel to another column of S
+        // or to a column of S_old by replacing columns of S by rand{-1,1}."
+        for (uword i=0; i<t; ++i)
+        {
+          do
+          {
+            _resample_column(i, S);
+            nresamples++;
+          } while (_column_needs_resampling(i, S, S_old));
+        }
+      }
+      S_old.set_size(n, 0);
+      // (3)
+      Z = At_x(A, S, p);
+      nmults++;
+      h = _max_abs_axis1(Z);
+      Z.set_size(n, 0);
+      // (4)
+      if (k >= 2 && h.max() == h(ind_best)) break;
+      // "Sort h so that h_first >= ... >= h_last
+      // and re-order ind correspondingly."
+      //
+      // Later on, we will need at most t+len(ind_hist) largest
+      // entries, so drop the rest
+      ind = stable_sort_index(h, "descend");
+      ind = ind.head(t + ind_hist.n_elem);
+      h.set_size(0);
+      if (t > 1)
+      {
+        // (5)
+        // Break if the most promising t vectors have been visited already.
+        if (_set_difference(ind.head(t), ind_hist).n_elem == 0) break;
+        // Put the most promising unvisited vectors at the front of the list
+        // and put the visited vectors at the end of the list.
+        // Preserve the order of the indices induces by the ordering of h.
+        ind = join_vert(_set_difference(ind, ind_hist), _set_intersection(ind, ind_hist));
+      }
+      for (uword j=0; j<t; ++j)
+      {
+        X.col(j) = _elementary_vector(n, ind(j));
+      }
+
+      uvec new_ind = _set_difference(ind.head(t), ind_hist);
+      ind_hist = join_vert(ind_hist, new_ind);
+      k++;
+    } while (true);
+
+    v = _elementary_vector(n, ind_best); 
+
+    _iter = k;
+    _v = v;
+    _w = w;
+
+    return est;
+  }
+
+  // ------ internal ------ //
+
+  vec _elementary_vector (const uword n, const uword i) const
+  {
+    vec out = zeros(n);
+    out.at(i) = 1;
+    return out;
+  }
+
+  bool _column_needs_resampling (const uword i, const mat& X, const mat& Y) const
+  {
+    uword n = X.n_rows;
+    uword t = X.n_cols;
+    bool out = false;
+    for (uword j=0; j<i; ++j)
+    {
+      out = out || _vectors_are_parallel(X.col(i), X.col(j));
+    }
+    if (out) return out;
+    for (uword j=0; j<Y.n_cols; ++j)
+    {
+      out = out || _vectors_are_parallel(X.col(i), Y.col(j));
+    }
+    return out;
+  }
+
+  bool _vectors_are_parallel (const vec& v, const vec& w) const
+  {
+    return dot(v, w) == double(v.n_elem);
+  }
+
+  void _resample_column (const uword i, mat& X) const
+  {
+    X.col(i) = sign(randu(X.n_rows) - 0.5);
+  }
+
+  mat _sign_round_up (arma::mat X) const
+  {
+    X.replace(0.0, 1.0);
+    X /= abs(X);
+    return X;
+  }
+
+  bool _every_col_of_X_is_parallel_to_a_col_of_Y (const mat& X, const mat& Y) const
+  {
+    for (uword i=0; i<X.n_cols; ++i)
+    {
+      for (uword j=0; j<Y.n_cols; ++j)
+      {
+        if (!_vectors_are_parallel(X.col(i), Y.col(j))) return false;
+      }
+    }
+    return true;
+  }
+
+  rowvec _sum_abs_axis0 (const arma::mat& X)
+  {
+    return sum(abs(X), 0);
+  }
+
+  vec _max_abs_axis1 (const arma::mat& X)
+  {
+    vec out (X.n_rows);
+    for (uword i=0; i<X.n_rows; ++i)
+    {
+      out.at(i) = abs(X.row(i)).max();
+    }
+    return out;
+  }
+
+  uvec _set_intersection (const uvec& A, const uvec& B)
+  {
+    // return in order that elements occur in A
+    uvec Ai, Bi, C;
+    intersect(C, Ai, Bi, A, B);
+    Ai = sort(Ai);
+    return A.elem(Ai);
+  }
+
+  uvec _set_difference (const uvec& A, const uvec& B)
+  {
+    // return in order that elements occur in A
+    uvec Ai, Bi, C;
+    intersect(C, Ai, Bi, A, B);
+    uvec Ad = zeros<uvec>(A.n_elem);
+    Ad.elem(Ai) += 1;
+    return A.elem(find(Ad == 0));
   }
 };
 

@@ -32,7 +32,6 @@ struct CoalescentEpoch
   const std::string prefix = "[CoalescentEpoch] ";
   const bool check_valid = true;
   const bool use_marginal_statistics = true; //see note in cnstr
-  const bool log_rates = false; //use log(rates) in likelihood (precision must be calculated appropriately)
 
   //TODO this should depend on dimension of state vectors
   const double left_stochastic_tol = 1e-12; 
@@ -179,16 +178,9 @@ struct CoalescentEpoch
     y_hat /= t;
 
     // Calculate loglikelihood
-    if (log_rates)
-    {
-      residual = B % (y - arma::log(y_hat));
-      gradient = B % residual / y_hat;
-      loglikelihood = -0.5 * arma::dot(residual, residual);
-    } else {
-      residual = B % (y - y_hat);
-      gradient = B % residual;
-      loglikelihood = -0.5 * arma::dot(residual, residual);
-    }
+    residual = B % (y - y_hat);
+    gradient = B % residual;
+    loglikelihood = -0.5 * arma::dot(residual, residual);
   }
 
   arma::cube reverse_differentiate (arma::mat& _states)
