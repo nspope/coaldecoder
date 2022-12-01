@@ -104,7 +104,7 @@ class ObservedTrioRates:
         # TODO: allow user to provide start/end of genomic interval
         # calculate tree and block span
         tree_exists = np.array([tree.num_edges > 0 for tree in ts.trees()])
-        tree_idx = np.array([-1 for _ in ts.num_trees])
+        tree_idx = np.array([-1 for _ in range(ts.num_trees)])
         tree_idx[tree_exists] = np.arange(np.sum(tree_exists))
         bootstrap_blocks = min(bootstrap_blocks, np.sum(tree_exists))
         tree_block = np.floor_divide(bootstrap_blocks * tree_idx, np.sum(tree_exists))
