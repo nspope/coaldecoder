@@ -103,12 +103,15 @@ class ObservedTrioRates:
 
         # TODO: allow user to provide start/end of genomic interval
         # calculate tree and block span
-        tree_idx = np.arange(ts.first().index, ts.last().index + 1)
-        bootstrap_blocks = min(bootstrap_blocks, len(tree_idx))
-        tree_block = np.floor_divide(bootstrap_blocks * tree_idx, len(tree_idx))
+        tree_exists = np.array([tree.num_edges > 0 for tree in ts.trees()])
+        tree_idx = np.array([-1 for _ in ts.num_trees])
+        tree_idx[tree_exists] = np.arange(np.sum(tree_exists))
+        bootstrap_blocks = min(bootstrap_blocks, np.sum(tree_exists))
+        tree_block = np.floor_divide(bootstrap_blocks * tree_idx, np.sum(tree_exists))
         tree_span = np.array([
             tree.interval.right - tree.interval.left for tree in ts.trees()
         ])
+        tree_span *= tree_exists
         tree_span /= np.sum(tree_span)
         block_span = np.array([
             sum(tree_span[np.where(tree_block == i)]) for i in range(bootstrap_blocks)
@@ -123,14 +126,15 @@ class ObservedTrioRates:
         block_y = np.zeros((num_weights, num_time_breaks, bootstrap_blocks))
         block_n = np.zeros((num_weights, num_time_breaks, bootstrap_blocks))
         for i, tree in enumerate(ts.trees()):
-            block = tree_block[i]
-            weights = self._trio_counts_for_tree(tree)
-            time_bin = np.searchsorted(self.time_breaks, weights.time, side='right') - 1
-            norm_weights = weights.weights * tree_span[i]
-            for j in range(len(weights.id)):
-                block_y[:, time_bin[j], block] += norm_weights[:, j]
-                for k in range(time_bin[j] + 1):
-                    block_n[:, k, block] += norm_weights[:, j]
+            if tree_exists[i]:
+                block = tree_block[i]
+                weights = self._trio_counts_for_tree(tree)
+                time_bin = np.searchsorted(self.time_breaks, weights.time, side='right') - 1
+                norm_weights = weights.weights * tree_span[i]
+                for j in range(len(weights.id)):
+                    block_y[:, time_bin[j], block] += norm_weights[:, j]
+                    for k in range(time_bin[j] + 1):
+                        block_n[:, k, block] += norm_weights[:, j]
 
         # TODO: initialize all members here, not piecemeal
         self.n = self._share_denominator_across_initial_states(block_n)
