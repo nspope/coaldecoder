@@ -69,7 +69,7 @@ class ObservedTrioRates:
             assert trees_per_block > 0
             bootstrap_blocks = ts.num_trees / trees_per_block
 
-        bootstrap_blocks = int(bootstrap_blocks)
+        bootstrap_blocks = max(1, int(bootstrap_blocks))
         assert bootstrap_blocks > 0
 
         #TODO:
