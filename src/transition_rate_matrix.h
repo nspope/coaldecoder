@@ -691,7 +691,8 @@ struct TrioTransitionRates
       }
     }
 
-    arma::sp_mat out = arma::spones(_X);
+    double constant = arma::nonzeros(M).min();
+    arma::sp_mat out = arma::spones(_X) * constant;
 
     // three lineages
     arma::uvec::fixed<3> u;
@@ -813,7 +814,7 @@ struct TrioTransitionRates
      *  [P,P,P] is unvisited
      */
 
-    out.transform([](double x) { return x - 1.0; });
+    out.transform([&constant](double x) { return x - constant; });
     out.diag() *= -1.0;
 
     return out;

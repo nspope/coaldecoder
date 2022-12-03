@@ -26,6 +26,7 @@
 #include <RcppArmadillo.h> 
 #include <map>
 #include <string>
+#include <random>
 
 // C++ implementation based off of:
 // https://github.com/scipy/scipy/blob/v1.8.0/scipy/sparse/linalg/_expm_multiply.py#L56-L142
@@ -44,12 +45,16 @@ struct OneNormEst
   const std::string prefix = "[OneNormEst] ";
   const double eps = 4 * datum::eps;
 
+  mutable std::mt19937 _rng;
+  mutable std::uniform_real_distribution<> _randu;
+
   vec _v;
   vec _w;
   uword _iter;
   double _est;
 
-  OneNormEst (const sp_mat& A, const int p=0, const bool approximate=true)  
+  OneNormEst (const sp_mat& A, const int p=0, const bool approximate=true) :
+    _rng(1024), _randu(0.0, 1.0)
   {
     //compute exact if !approximate or condition met?
     _est = approximate ? approximate_norm(A, p) : exact_norm(A, p);
@@ -283,6 +288,16 @@ struct OneNormEst
     return out;
   }
 
+  vec _random_uniform (const uword n) const
+  {
+    vec out (n);
+    for (uword i=0; i<n; ++i)
+    {
+      out[i] = _randu(_rng);
+    }
+    return out;
+  }
+
   bool _vectors_are_parallel (const vec& v, const vec& w) const
   {
     return dot(v, w) == double(v.n_elem);
@@ -290,7 +305,8 @@ struct OneNormEst
 
   void _resample_column (const uword i, mat& X) const
   {
-    X.col(i) = sign(randu(X.n_rows) - 0.5);
+    //X.col(i) = sign(randu(X.n_rows) - 0.5);
+    X.col(i) = sign(_random_uniform(X.n_rows) - 0.5);
   }
 
   mat _sign_round_up (arma::mat X) const
@@ -612,7 +628,7 @@ struct SparseMatrixExponentialMultiply
             arma::dot(dB.row(dA_.row()), Bij.row(dA_.col()));
           if (Av == 0.0) 
           {
-            Rcpp::stop("[SparseMatrixExponentialMultiply] Can't void nonzero element");
+            Rcpp::stop(prefix + " Can't void nonzero element");
           }
           (*dA_) = Av;
         }
@@ -696,6 +712,8 @@ struct SparseMatrixExponentialMultiplySafe
         step *= step_reduction;
         if (step < step_min * t) 
         {
+          A.save("_tempFile_coaldecoder_A_" + std::to_string(t) + ".txt", arma::coord_ascii); //DEBUG
+          B.save("_tempFile_coaldecoder_B_" + std::to_string(t) + ".txt", arma::coord_ascii); //DEBUG
           Rcpp::stop(prefix + "Minimum allowed step length reached");
         }
       } 
@@ -707,7 +725,7 @@ struct SparseMatrixExponentialMultiplySafe
 
   bool _check_left_stochastic (const mat& x, const double& tol)
   {
-    return all(vectorise(x) >= 0) && all(abs(sum(x, 0) - 1.0) <= tol);
+    return all(vectorise(x) >= 0.0) && all(abs(sum(x, 0) - 1.0) <= tol);
   }
 
   sp_mat reverse_differentiate (mat& dB, const mat& dX)

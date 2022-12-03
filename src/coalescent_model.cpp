@@ -33,7 +33,7 @@ struct CoalescentEpoch
   const bool check_valid = true;
   const bool use_marginal_statistics = true; //see note in cnstr
 
-  //TODO this should depend on dimension of state vectors
+  //TODO this should depend on dimension of state vectors?
   const double left_stochastic_tol = 1e-12; 
 
   const TrioAdmixtureProportions admix_matrix;
@@ -72,6 +72,7 @@ struct CoalescentEpoch
   ) : check_valid (_check_valid)
     , admix_matrix (_A, _check_valid)
     , rate_matrix (_M, _rate_matrix_template, _check_valid)
+    //, rate_matrix (_M, _check_valid) // no potential for loss of precision, but slower for large matrices
     , emission_mapping (_emission_mapping)
     , state_mapping (_state_mapping)
     , initial_mapping (_initial_mapping)
@@ -108,6 +109,8 @@ struct CoalescentEpoch
         Rcpp::stop(prefix + "Epoch duration must be positive");
       }
 
+      //arma::rowvec colsum_check = arma::sum(_states, 0);
+      //if (arma::any(arma::abs(colsum_check - 1.0)/(1.0 + arma::abs(colsum_check)) > left_stochastic_tol))
       if (arma::any(arma::abs(arma::sum(_states, 0) - 1.0) > left_stochastic_tol))
       {
         Rcpp::stop(prefix + "State probability vector does not sum to one");
@@ -126,9 +129,8 @@ struct CoalescentEpoch
     _states = admix_matrix.X * _states;
 
     // Transition probabilities
-    // TODO: this is *still* failing without safeguards
-    //SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), _states, t);
-    SparseMatrixExponentialMultiplySafe transition (arma::trans(rate_matrix.X), _states, t);
+    SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), _states, t);
+    //SparseMatrixExponentialMultiplySafe transition (arma::trans(rate_matrix.X), _states, t);
     _states = transition.result;
 
     // Fitted rates
@@ -235,8 +237,8 @@ struct CoalescentEpoch
 
     // Gradient wrt starting state vectors, trio rate matrix
     // (this adds gradient contribution to existing d_states)
-    SparseMatrixExponentialMultiplySafe transition (arma::trans(rate_matrix.X), admix_matrix.X * states, t);
-    //SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), admix_matrix.X * states, t);
+    SparseMatrixExponentialMultiply transition (arma::trans(rate_matrix.X), admix_matrix.X * states, t);
+    //SparseMatrixExponentialMultiplySafe transition (arma::trans(rate_matrix.X), admix_matrix.X * states, t);
     arma::mat tmp;
     arma::sp_mat d_rate_matrix = 
       transition.reverse_differentiate(tmp, _states); 
@@ -401,6 +403,18 @@ struct CoalescentDecoder
 
     TrioAdmixtureProportions admix (_A, check_valid);
     return admix.X * _X;
+  }
+
+  arma::mat update_states (const mat& _X, const arma::mat& _M, const arma::mat& _A, const double& _t)
+  {
+    /*
+     *  Map state probability vectors across duration, given demographic
+     *  parameters and admixture coefficients
+     */
+    TrioAdmixtureProportions admix (_A, check_valid);
+    TrioTransitionRates rates (_M, check_valid);
+    SparseMatrixExponentialMultiplySafe expm (arma::trans(rates.X), admix.X * _X, _t, 1.0e-12, 1.0); //DEBUG: remove step_min
+    return expm.result;
   }
 
   arma::cube occupancy_probabilities (const arma::cube& _M, const arma::cube& _A)
@@ -774,6 +788,7 @@ RCPP_MODULE(CoalescentDecoder) {
     .method("transition_operator", &CoalescentDecoder::transition_operator)
     .method("transition_operator_unsafe", &CoalescentDecoder::transition_operator_unsafe)
     .method("admixture_operator", &CoalescentDecoder::admixture_operator)
+    .method("update_states", &CoalescentDecoder::update_states)
     .method("occupancy_probabilities", &CoalescentDecoder::occupancy_probabilities)
     .method("smoothness_penalty", &CoalescentDecoder::smoothness_penalty)
     .method("expected_rates", &CoalescentDecoder::expected_rates)
