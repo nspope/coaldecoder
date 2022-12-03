@@ -221,129 +221,29 @@ test_1.2 <- all(dplyr::near(agh, erg))
 #TODO need a suite of tough test cases
 library(coaldecoder)
 library(Matrix)
-load("~/Downloads/fing_hell/coaldecoder/problem.RData")
+load("~/Downloads/fing_hell/problem_dem.RData")
 deco <- CoalescentDecoder$new(4, c(t), TRUE)
 X <- state
 Q <- t(deco$transition_rates(M[,,1]))
 Spoo <- SpMatExp$new(Q, X, t)
-all(dplyr::near( Spoo$result, (expm(t * Q) %*% X) ))
-
-set.seed(1)
-onenormest2 <- function (A, t = min(n, 5), A.x, At.x, n, silent = FALSE, quiet = silent,
-    iter.max = 10, eps = 4 * .Machine$double.eps)
-{
-    mi.A <- missing(A)
-    mi.A.x <- missing(A.x)
-    mi.At.x <- missing(At.x)
-    no.A.x <- mi.A.x || !is.function(A.x)
-    no.At.x <- mi.At.x || !is.function(At.x)
-    if (mi.A && (no.A.x || no.At.x))
-        stop("must either specify 'A' or the functions 'A.x' and 'At.x'")
-    if (!mi.A && (!mi.A.x || !mi.At.x))
-        warning("when 'A' is specified, 'A.x' and 'At.x' are disregarded")
-    if (mi.A) {
-        stopifnot(is.numeric(n), length(n) == 1, n == round(n),
-            n >= 0)
-    }
-    else {
-        if (length(d <- dim(A)) != 2 || (n <- d[1]) != d[2])
-            stop("'A' must be a square matrix")
-        rm(d)
-    }
-    stopifnot(is.numeric(t), length(t) == 1, t >= 1, iter.max >=
-        1)
-    X <- matrix(runif(n * t), n, t)
-    XX <<- X
-    X <- X/rep(colSums(X), each = n)
-    been_there <- logical(n)
-    I.t <- diag(nrow = t)
-    est_old <- 0
-    S <- matrix(0, n, t)
-    for (iter in 1:(iter.max + 1)) {
-        Y <- if (mi.A)
-            A.x(X)
-        else A %*% X
-        imax <- which.max(cY <- colSums(abs(Y)))
-        est <- cY[imax]
-        if (est > est_old || iter == 2)
-            w <- Y[, imax]
-        if (iter >= 2 && est < est_old) {
-            est <- est_old
-            break
-        }
-        est_old <- est
-        S_old <- S
-        if (iter > iter.max) {
-            if (!silent)
-                warning(gettextf("not converged in %d iterations",
-                  iter.max), domain = NA)
-            break
-        }
-        S <- sign(Y)
-        partest <- apply(abs(crossprod(S_old, S) - n) < eps *
-            n, 2, any)
-        if (all(partest)) {
-            if (!quiet)
-                message("hit a cycle (1) -- stop iterations")
-            break
-        }
-        if (any(partest)) {
-            numpar <- sum(partest)
-            replacements <- matrix(sample(c(-1, 1), n * numpar,
-                replace = TRUE), n, numpar)
-            S[, partest] <- replacements
-        }
-        partest <- apply(crossprod(S) - I.t == n, 2, any)
-        if (any(partest)) {
-            numpar <- sum(partest)
-            replacements <- matrix(sample(c(-1, 1), n * numpar,
-                replace = TRUE), n, numpar)
-            S[, partest] <- replacements
-        }
-        Z <- if (mi.A)
-            At.x(S)
-        else crossprod(A, S)
-        h <- pmax.int(2, as(abs(Z), "matrix"))
-        dim(h) <- dim(Z)
-        mhi <- apply(h, 2, which.max)
-        if (iter >= 2 && all(mhi == imax)) {
-            if (!quiet)
-                message("hit a cycle (2) -- stop iterations")
-            break
-        }
-        r <- apply(h, 2, sort.int, decreasing = TRUE, index.return = TRUE)
-        h <- sapply(r, `[[`, "x")
-        ind <- sapply(r, `[[`, "ix")
-        if (t > 1) {
-            firstind <- ind[1:t]
-            if (all(been_there[firstind])) {
-                break
-            }
-            ind <- ind[!been_there[ind]]
-            if (length(ind) < t) {
-                if (!quiet)
-                  message("not enough new vecs -- stop iterations")
-                break
-            }
-        }
-        X <- matrix(0, n, t)
-        X[cbind(ind[1:t], 1:t)] <- 1
-        been_there[ind[1:t]] <- TRUE
-    }
-    v <- integer(n)
-    v[imax] <- 1L
-    list(est = est, v = v, w = w, iter = iter)
-}
-
+stopifnot(all(dplyr::near( Spoo$result, (expm(t * Q) %*% X) )))
 
 #---------------test one-norm estimation-----------------#
-#TODO
+#TODO have saved test cases
+#also test exact norm on small example
+library(coaldecoder)
+library(Matrix)
+
+set.seed(1)
 p <- 4
 eek <- rsparsematrix(10000, 10000, 0.01)
 Ax = function(x) {for(i in 1:p) x <- eek %*% x; x}
 Atx = function(x) {for(i in 1:p) x <- t(eek) %*% x; x}
 ah <- onenormest(A.x=Ax, At.x=Atx, n=nrow(eek))
-
-eh <- OneNormEst$new(eek, p, TRUE, TRUE)
 ah$est
+
+writeMM(eek, "~/Dropbox/Projects/expm/rsparsematrix.mm")
+
+set.seed(1)
+eh <- OneNormEst$new(eek, 4, TRUE)
 eh$est

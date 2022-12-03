@@ -49,13 +49,13 @@ struct OneNormEst
   uword _iter;
   double _est;
 
-  OneNormEst (const sp_mat& A, const int p=0, const bool verbose=false, const bool approximate=true)  
+  OneNormEst (const sp_mat& A, const int p=0, const bool approximate=true)  
   {
     //compute exact if !approximate or condition met?
-    _est = approximate ? approximate_norm(A, p, verbose) : exact_norm(A, p, verbose);
+    _est = approximate ? approximate_norm(A, p) : exact_norm(A, p);
   }
 
-  double exact_norm (const sp_mat& A, const int p, const bool verbose)
+  double exact_norm (const sp_mat& A, const int p)
   {
     mat I = eye(A.n_rows, A.n_rows);
     for (unsigned i = 0; i<p; ++i)
@@ -83,159 +83,11 @@ struct OneNormEst
     return X;
   }
 
-  // ------- equivalent to `onenormest` in R::Matrix ------- //
-  
-  double approximate_norm (const sp_mat& A, const int p, const bool verbose, const unsigned iter_max = 10)
-  {
-    // seems like this is problematic (produces incorrect results when hitting
-    // cycles), use alternate version
-    
-    uword n = A.n_rows;
-    uword t = std::min(int(n), 5);
-
-    if (A.n_rows != A.n_cols)
-    {
-      Rcpp::stop(prefix + "Matrix must be square");
-    }
-
-    if (t < 1 || iter_max < 1) Rcpp::stop(prefix + "Invalid inputs");
-
-    mat X = randu(n, t); 
-    X.each_col([](vec& x) { x /= accu(x); });
-    uvec been_there = zeros<uvec>(n);
-    mat I_t = eye(t, t);
-    double est_old = 0.0;
-    double est = 0.0;
-    mat S = zeros(n, t);
-    mat S_old = S;
-    vec w = zeros(n);
-    uword imax;
-    unsigned iter;
-    for (iter=0; iter<iter_max+1; ++iter)
-    {
-      mat Y = A_x(A, X, p);
-      rowvec cY = sum(abs(Y), 0);
-      imax = cY.index_max();
-      est = cY[imax];
-      if (est > est_old || iter == 1)
-      {
-        w = Y.col(imax);
-      }
-      if (iter >= 1 && est < est_old)
-      {
-        est = est_old;
-        break;
-      }
-      est_old = est;
-      S_old = S;
-      if (iter == iter_max)
-      {
-        if (verbose)
-        {
-          Rcpp::Rcout << prefix << "Did not converge in " << iter_max << " iterations" << std::endl;
-        }
-        break;
-      }
-      S = sign(Y);
-      mat S_check = abs(trans(S_old) * S - n);
-      uvec partest (S_check.n_cols);
-      for (uword i=0; i<S_check.n_cols; ++i)
-      {
-        uvec check = find(S_check.col(i) < eps * n);
-        partest.at(i) = check.n_elem;
-      }
-      if (all(partest > 0))
-      {
-        if (verbose)
-        {
-          Rcpp::Rcout << prefix << "Hit a cycle (1), stopping iterations" << std::endl;
-        }
-        break;
-      }
-      if (any(partest > 0))
-      {
-        uvec check = find(partest > 0);
-        for (auto j : check)
-        {
-          S.col(j) = sign(randu(n) - 0.5);
-        }
-      }
-      S_check = trans(S) * S - I_t;
-      for (uword i=0; i<S_check.n_cols; ++i)
-      {
-        uvec check = find(S_check.col(i) == n);
-        partest.at(i) = check.n_elem;
-      }
-      if (any(partest > 0))
-      {
-        uvec check = find(partest > 0);
-        for (auto j : check)
-        {
-          S.col(j) = sign(randu(n) - 0.5);
-        }
-      }
-      mat Z = At_x(A, S, p);
-      mat h = abs(Z);
-      h.transform([](double x){ return(std::max(2.0, x)); });
-      uvec mhi (h.n_cols);
-      for (unsigned i=0; i<h.n_cols; ++i)
-      {
-        mhi[i] = h.col(i).index_max();
-      }
-      if (iter >= 1 && all(mhi == imax))
-      {
-        if (verbose)
-        {
-          Rcpp::Rcout << prefix << "Hit a cycle (2), stopping iterations" << std::endl;
-        }
-        break;
-      }
-      umat indmat (size(h));
-      for (unsigned i=0; i<h.n_cols; ++i)
-      {
-        indmat.col(i) = sort_index(h.col(i), "descend");
-        h.col(i) = sort(h.col(i), "descend");
-      }
-      uvec ind = vectorise(indmat);
-      if (t > 1)
-      {
-        uvec firstind = ind.head(t);
-        if (all(been_there.elem(firstind)))
-        {
-          break;
-        }
-        arma::uvec keep_ind = find(been_there.elem(ind) == 0);
-        ind = ind.elem(keep_ind);
-        if (ind.n_elem < t)
-        {
-          if (verbose)
-          {
-            Rcpp::Rcout << prefix << "Not enough new vectors, stopping iterations" << std::endl;
-          }
-          break;
-        }
-      }
-      X = zeros(n, t);
-      for (unsigned i=0; i<t; ++i)
-      {
-        X.at(ind[i], i) = 1.0;
-        been_there[ind[i]] = 1;
-      }
-    }
-
-    vec v = zeros(n);
-    v[imax] = 1;
-
-    _v = v;
-    _w = w;
-    _iter = iter;
-
-    return est;
-  }
-
   // ------- equivalent to `onenormest` in python::scipy ------- //
+  // 07 JUN 22 -- I think this is working, gives equivalent results to scipy.
+  //   However there are no resamples beyond the first. Should test this.
 
-  double approximate_norm_alternate (const sp_mat& A, const int p, const bool verbose, const unsigned t = 2, const unsigned iter_max = 5)
+  double approximate_norm (const sp_mat& A, const int p, const unsigned t = 2, const unsigned iter_max = 5)
   {
     // Higham and Tisseur 2000, Algorithm 2.4
     
@@ -271,7 +123,7 @@ struct OneNormEst
     mat X = ones(n, t); 
     mat Y = zeros(n, 0);
     mat Z = zeros(n, 0);
-    mat S = zeros(n, 0);
+    mat S = zeros(n, t);
     mat S_old = zeros(n, 0);
     vec h = zeros(0);
     vec v;
@@ -281,7 +133,7 @@ struct OneNormEst
 
     // "The remaining columns are chosen as rand{-1,1},
     // with a check for and correction of parallel columns,
-    // exact as for S in the body of the algorithm."
+    // exactly as for S in the body of the algorithm."
     if (t > 1)
     {
       for (uword i=1; i<t; ++i)
@@ -294,9 +146,14 @@ struct OneNormEst
       {
         do
         {
-          _resample_column(i, X);
-          nresamples++;
-        } while (_column_needs_resampling(i, X, Y));
+          if (_column_needs_resampling(i, X, Y))
+          {
+            _resample_column(i, X);
+            nresamples++;
+          } else {
+            break;
+          }
+        } while (true);
       }
     }
     // "Choose starting matrix X with columns of unit 1-norm."
@@ -345,9 +202,14 @@ struct OneNormEst
         {
           do
           {
-            _resample_column(i, S);
-            nresamples++;
-          } while (_column_needs_resampling(i, S, S_old));
+            if (_column_needs_resampling(i, S, S_old))
+            {
+              _resample_column(i, S);
+              nresamples++;
+            } else {
+              break;
+            }
+          } while (true);
         }
       }
       S_old.set_size(n, 0);
@@ -567,8 +429,7 @@ struct SparseMatrixExponentialMultiply
     double _A_1_norm, _scale;
     int _ell;
     std::map<int, double> _d;
-    const bool _verbose = false;
-    const bool _approximate_norm = false; //DEBUG
+    const bool _approximate_norm = true; //TODO: should allow this to be toggled
   
     OperatorNorm (const sp_mat& A, double A_1_norm, int ell, double scale = 1.)
       : _A (A), _A_1_norm (A_1_norm), _ell (ell), _scale (scale)
@@ -576,7 +437,7 @@ struct SparseMatrixExponentialMultiply
 
     double norm_1_power (const sp_mat& A, int p)
     {
-      OneNormEst one_norm (A, p, _verbose, _approximate_norm);
+      OneNormEst one_norm (A, p, _approximate_norm);
       return one_norm._est;
     }
   
@@ -766,6 +627,8 @@ struct SparseMatrixExponentialMultiply
   }
 };
 
+// ---------------------------------------------------
+
 struct SparseMatrixExponentialMultiplySafe
 {
   /*
@@ -861,7 +724,8 @@ struct SparseMatrixExponentialMultiplySafe
   }
 };
 
-//-------------------
+//------------------- for debugging purposes
+
 struct SparseMatrixExponentialMultiplyRescale
 {
   //private:
@@ -935,7 +799,7 @@ struct SparseMatrixExponentialMultiplyRescale
     return _A + _mu * speye(size(_A));
   }
 
-  double OpNormD (const int p) //DEBUG
+  double OpNormD (const int p) 
   {
     double _A_1_norm = norm(_A, 1);
     OperatorNorm operator_norm(_t*_A, _t*_A_1_norm, 2);
@@ -955,13 +819,7 @@ struct SparseMatrixExponentialMultiplyRescale
 
     double norm_1_power (const sp_mat& A, int p)
     {
-      //rowvec x = ones<rowvec>(A.n_rows);
-      //for (int i=0; i<p; ++i)
-      //{
-      //  x *= A;
-      //}
-      //return abs(x).max();
-      OneNormEst one_norm (A, p, true, true);
+      OneNormEst one_norm (A, p, true);
       return one_norm._est;
     }
   

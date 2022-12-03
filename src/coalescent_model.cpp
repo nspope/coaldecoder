@@ -793,7 +793,7 @@ RCPP_MODULE(CoalescentDecoder) {
     .method("OpNormD", &SparseMatrixExponentialMultiplyRescale::OpNormD)
     ;
   class_<OneNormEst>("OneNormEst")
-    .constructor<arma::sp_mat, int, bool, bool>()
+    .constructor<arma::sp_mat, int, bool>()
     .field("est", &OneNormEst::_est)
     .field("w", &OneNormEst::_w)
     .field("v", &OneNormEst::_v)
