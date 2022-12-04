@@ -71,8 +71,8 @@ struct CoalescentEpoch
       const bool _check_valid = true
   ) : check_valid (_check_valid)
     , admix_matrix (_A, _check_valid)
-    , rate_matrix (_M, _rate_matrix_template, _check_valid)
-    //, rate_matrix (_M, _check_valid) // no potential for loss of precision, but slower for large matrices
+    //, rate_matrix (_M, _rate_matrix_template, _check_valid)
+    , rate_matrix (_M, _check_valid) // no potential for loss of precision, but slower for large matrices
     , emission_mapping (_emission_mapping)
     , state_mapping (_state_mapping)
     , initial_mapping (_initial_mapping)
