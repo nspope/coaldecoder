@@ -44,9 +44,15 @@ class ObservedTrioRates:
 
     def __init__ (self, ts, sample_sets, time_breaks, bootstrap_blocks=1, trees_per_block=None, mask=None, threads=1):
 
+        #TODO:
+        # what should time breaks instance be?
+        # allow user to provide start/end of genomic interval?
+
         self.prefix = "[CalculateTrioRates] "
 
-        # check inputs
+        threads = int(threads)
+        assert threads > 0
+
         if isinstance(ts, str):
             ts = tskit.load(ts)
         else:
@@ -62,26 +68,21 @@ class ObservedTrioRates:
             self.sample_sets.append(s)
         self.num_populations = len(self.sample_sets)
 
-        #TODO:
-        # what should time breaks instance be?
-
         if trees_per_block is not None:
             assert trees_per_block > 0
             bootstrap_blocks = ts.num_trees / trees_per_block
-
         bootstrap_blocks = max(1, int(bootstrap_blocks))
         assert bootstrap_blocks > 0
 
-        #TODO:
-        # alternatively specify trees_per_block
-
+        inaccessible = np.full(int(ts.sequence_length), False)
         if mask is not None:
-            assert isinstance(mask, np.ndarray)
-            print(self.prefix + "Removing masked intervals from tree sequence")
-            ts.delete_intervals(mask)
-
-        threads = int(threads)
-        assert threads > 0
+            assert isinstance(mask, np.ndarray), "Mask musk be numpy array"
+            assert mask.ndim == 2 and mask.shape[1] == 2, "Mask must be a 2-column array"
+            assert mask.max() <= ts.sequence_length, "Mask extends beyond sequence length"
+            assert mask.min() >= 0, "Mask must have positive coordinates"
+            assert np.all(np.diff(mask, axis=0)) > 0, "Accessibility mask has invalid coordinates"
+            for interval in mask:
+                inaccessible[interval[0]:interval[1]] = True
 
         self.sequence_length = ts.sequence_length
         self.num_trees = ts.num_trees
@@ -90,7 +91,6 @@ class ObservedTrioRates:
         self._pair_index = np.zeros((self.num_populations, self.num_populations), "int32")
         for i, u in enumerate(combn_replace(np.arange(self.num_populations), 2)):
             self._pair_index[u[0], u[1]] = i
-        #self._pair_linear_index = lambda i, j : self._pair_index[i, j]
 
         # check that sample times are all the same within a sample set
         sample_times = [list({ts.get_time(i) for i in s}) for s in self.sample_sets]
@@ -101,16 +101,23 @@ class ObservedTrioRates:
         assert all([i in time_breaks for i in self.population_times])
         self.time_breaks = time_breaks
 
-        # TODO: allow user to provide start/end of genomic interval
-        # calculate tree and block span
-        tree_exists = np.array([tree.num_edges > 0 for tree in ts.trees()])
+        # calculate tree span, using accessibility mask if provided
+        #tree_span = np.array([
+        #    tree.interval.right - tree.interval.left for tree in ts.trees()
+        #])
+        #tree_exists = np.array([tree.num_edges > 0 for tree in ts.trees()])
+        tree_span = np.array([
+            np.sum(~inaccessible[int(tree.interval.left):int(tree.interval.right)])
+            if tree.num_edges > 0 else 0.0
+            for tree in ts.trees()
+        ], dtype=float)
+        tree_exists = tree_span > 0.0
+
+        # allocate trees to blocks
         tree_idx = np.array([-1 for _ in range(ts.num_trees)])
         tree_idx[tree_exists] = np.arange(np.sum(tree_exists))
         bootstrap_blocks = min(bootstrap_blocks, np.sum(tree_exists))
         tree_block = np.floor_divide(bootstrap_blocks * tree_idx, np.sum(tree_exists))
-        tree_span = np.array([
-            tree.interval.right - tree.interval.left for tree in ts.trees()
-        ])
         tree_span *= tree_exists
         tree_span /= np.sum(tree_span)
         block_span = np.array([
