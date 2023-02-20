@@ -27,6 +27,7 @@ Helper functions to extract trio coalescence rates from tree sequences.
 import numpy as np
 import scipy as spy
 import tskit
+import warnings
 from math import factorial as fac
 from itertools import combinations_with_replacement as combn_replace
 from itertools import combinations as combn
@@ -58,6 +59,12 @@ class ObservedTrioRates:
         else:
             assert isinstance(ts, tskit.TreeSequence)
 
+        if not ts.discrete_genome:
+            warnings.warn(
+                "tree_sequence.discrete_genome is False, but breakpoints will "
+                "be treated as integers for calculating tree span."
+            )
+
         assert isinstance(sample_sets, dict)
         self.population_names = np.sort(list(sample_sets))
         self.sample_sets = []
@@ -78,14 +85,12 @@ class ObservedTrioRates:
         if mask is not None:
             assert isinstance(mask, np.ndarray), "Mask musk be numpy array"
             assert mask.ndim == 2 and mask.shape[1] == 2, "Mask must be a 2-column array"
+            mask = mask.astype(int)
             assert mask.max() <= ts.sequence_length, "Mask extends beyond sequence length"
             assert mask.min() >= 0, "Mask must have positive coordinates"
-            assert np.all(np.diff(mask, axis=0)) > 0, "Accessibility mask has invalid coordinates"
+            assert np.all(np.diff(mask, axis=0)) > 0, "Intervals in mask must have a positive length"
             for interval in mask:
                 inaccessible[interval[0]:interval[1]] = True
-
-        self.sequence_length = ts.sequence_length
-        self.num_trees = ts.num_trees
 
         # make pair indices
         self._pair_index = np.zeros((self.num_populations, self.num_populations), "int32")
@@ -119,12 +124,20 @@ class ObservedTrioRates:
         bootstrap_blocks = min(bootstrap_blocks, np.sum(tree_exists))
         tree_block = np.floor_divide(bootstrap_blocks * tree_idx, np.sum(tree_exists))
         tree_span *= tree_exists
-        tree_span /= np.sum(tree_span)
+        self.sequence_length = np.sum(tree_span)
+        self.num_trees = np.sum(tree_exists)
+        tree_span /= self.sequence_length
         block_span = np.array([
             sum(tree_span[np.where(tree_block == i)]) for i in range(bootstrap_blocks)
         ])
 
-        # TODO: For lots of pops the size of the weights table will be huge. It could be a sparse matrix instead
+        assert self.sequence_length == np.sum(~inaccessible)
+        assert np.isclose(np.sum(block_span), 1.0)
+        if not self.sequence_length > 0:
+            raise ValueError(
+                "The accessible sequence length is zero; cannot calculate rates"
+            )
+
         # TODO: parallelize over blocks
         # TODO: use edge diffs
         # calculate weights per block

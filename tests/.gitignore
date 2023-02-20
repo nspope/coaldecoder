@@ -1,3 +1,5 @@
 *.ts*
 *.RData
 *.swp
+*.pdf
+*.png

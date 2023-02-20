@@ -17,13 +17,19 @@ demography = [
   msprime.MassMigration(time=30000, source=2, dest=0),
 ]
 
-ts = msprime.simulate(
-  population_configurations=populations,
-  demographic_events=demography,
-  Ne=20000,
+model = msprime.Demography.from_old_style(
+    population_configurations=populations, 
+    demographic_events=demography,
+    ignore_sample_size=True,
+)
+
+ts = msprime.sim_ancestry(
+  samples={i:3 for i in range(3)},
+  demography=model,
   recombination_rate=1e-8,
-  length=1e5,
-  random_seed=1024
+  sequence_length=1e5,
+  random_seed=1024,
+  discrete_genome=True,
 )
 
 print("Trees: " + str(ts.num_trees))

@@ -5,6 +5,7 @@ reticulate::source_python(system.file("python", "calculate_rates.py", package = 
 #-----------no bootstrapping-------------#
 #compare new rate calculator to old edge-diff version
 
+test_against_old <- function()
 {
 foo <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,Inf))
 old_rates <- calculate_rates(c("example_3x3.ts"), list(0:2, 3:5, 6:8), c(0.0,Inf))
@@ -15,6 +16,7 @@ test_1.1 <- all(dplyr::near(sort(unique(new_rates[1:18,1])), sort(unique(old_rat
 stopifnot(test_1.1)
 }
 
+test_against_old_windowed <- function()
 {
 foo <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,10000,20000,30000))
 old_rates <- calculate_rates(c("example_3x3.ts"), list(0:2, 3:5, 6:8), c(0.0,10000,20000,30000,Inf))
@@ -31,6 +33,7 @@ stopifnot(test_1.2)
 }
 
 #-----------test bootstrapping-----------#
+test_bootstrapping <- function()
 {
 foo <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,10000,20000,30000), bootstrap_blocks = 10)
 boot_y <- foo$bootstrapped_rates(num_replicates=1000, random_seed=1)
@@ -38,19 +41,20 @@ y <- foo$rates()
 y_hat <- apply(boot_y, c(1,2), mean)
 plot(y, y_hat); abline(0,1) #good
 
-test_1.1 <- all( abs(y - y_hat) < 1e-5, na.rm=TRUE)
+test_2.1 <- all( abs(y - y_hat) < 1e-5, na.rm=TRUE)
 
 std_d <- foo$std_dev(num_replicates=1000, random_seed=1)
 boot_r <- foo$bootstrapped_rates(num_replicates=1000, random_seed=1)
 boot_sd <- apply(boot_r, c(1,2), sd)
 
-test_1.2 <- all(dplyr::near(std_d, boot_sd), na.rm=TRUE)
+test_2.2 <- all(dplyr::near(std_d, boot_sd), na.rm=TRUE)
 
-stopifnot(test_1.1)
-stopifnot(test_1.2)
+stopifnot(test_2.1)
+stopifnot(test_2.2)
 }
 
 #-----------test block-by-trees----------#
+test_blocking <- function()
 {
 foo <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,10000,20000,30000), trees_per_block = 50)
 
@@ -58,6 +62,7 @@ stopifnot(foo$bootstrap_blocks == floor(foo$num_trees / 50))
 }
 
 #-----------test merging-----------------#
+test_merging <- function()
 {
 foo <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,10000,20000,30000))
 foo2 <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,10000,20000,30000), bootstrap_blocks=10)
@@ -79,6 +84,7 @@ stopifnot(test_3.5)
 }
 
 #-----------test precision smoothing-----#
+test_smoothing <- function()
 {
 #this isnt a test, just playing around with ideas for implementation
 # python3 simulate_3pop_iid_ancient.py --samples 10 --trees 50000 --out asympt_iid_ancient_10x3.ts --seed 1024
@@ -113,8 +119,6 @@ plot(df$value, df$fit0)
 plot(df$value, df$fit1)
 plot(df$value, df$fit2)
 
-
-
 library(ggplot2)
 library(dplyr)
 library(reshape2)
@@ -130,7 +134,40 @@ dff %>% group_by(Var1) %>% mutate(nn = n/max(n)) %>%
 }
 
 #-----------test masking-----------------#
-#TODO:
+test_masking <- function()
+{
+ts_obj <- reticulate::py_run_string("
+import tskit
+import numpy as np
+ts = tskit.load('example_3x3.ts')
+breaks = np.array([i for i in ts.breakpoints()])
+", local=TRUE)
+breaks <- ts_obj[["breaks"]]
+
+mask <- cbind(breaks[2:length(breaks) - 1], breaks[2:length(breaks) - 1] + 1)
+foo <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,10000,20000,30000), mask=mask)
+
+test_1 <- dplyr::near(foo$sequence_length, ts_obj[["ts"]][["sequence_length"]] - nrow(mask))
+stopifnot(test_1)
+
+mask <- cbind(breaks[2:length(breaks) - 1], breaks[2:length(breaks)])
+mask <- mask[1:10,]
+bar <- ObservedTrioRates("example_3x3.ts", list("A"=0:2, "B"=3:5, "C"=6:8), c(0.0,10000,20000,30000), mask=mask)
+
+test_2 <- dplyr::near(bar$sequence_length, max(breaks) - breaks[11])
+test_3 <- bar$num_trees == length(breaks) - 1 - 10
+stopifnot(test_2)
+stopifnot(test_3)
+}
 
 #-----------test ancient sample----------#
 #TODO:
+
+#----------------------------------------#
+test_against_old()
+test_against_old_windowed()
+test_bootstrapping()
+test_blocking()
+test_merging()
+test_masking()
+
