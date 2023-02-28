@@ -52,12 +52,12 @@ class ObservedTrioRates:
         self.prefix = "[CalculateTrioRates] "
 
         threads = int(threads)
-        assert threads > 0
+        assert threads > 0, "Thread count must be greater than 0"
 
         if isinstance(ts, str):
             ts = tskit.load(ts)
         else:
-            assert isinstance(ts, tskit.TreeSequence)
+            assert isinstance(ts, tskit.TreeSequence), "Input is not tree sequence"
 
         if not ts.discrete_genome:
             warnings.warn(
@@ -65,21 +65,21 @@ class ObservedTrioRates:
                 "be treated as integers for calculating tree span."
             )
 
-        assert isinstance(sample_sets, dict)
+        assert isinstance(sample_sets, dict), "Sample sets must be dict"
         self.population_names = np.sort(list(sample_sets))
         self.sample_sets = []
         for name in self.population_names:
             s = sample_sets[name]
-            assert all([isinstance(i, int) for i in s])
-            assert all([i in ts.samples() for i in s])
+            assert all([isinstance(i, int) for i in s]), "Sample IDs must be integers"
+            assert all([i in ts.samples() for i in s]), "Some sample IDs are out of range"
             self.sample_sets.append(s)
         self.num_populations = len(self.sample_sets)
 
         if trees_per_block is not None:
-            assert trees_per_block > 0
+            assert trees_per_block > 0, "Trees per block must be positive or None"
             bootstrap_blocks = ts.num_trees / trees_per_block
         bootstrap_blocks = max(1, int(bootstrap_blocks))
-        assert bootstrap_blocks > 0
+        assert bootstrap_blocks > 0, "Must have at least one block"
 
         inaccessible = np.full(int(ts.sequence_length), False)
         if mask is not None:
@@ -88,7 +88,7 @@ class ObservedTrioRates:
             mask = mask.astype(int)
             assert mask.max() <= ts.sequence_length, "Mask extends beyond sequence length"
             assert mask.min() >= 0, "Mask must have positive coordinates"
-            assert np.all(np.diff(mask, axis=0)) > 0, "Intervals in mask must have a positive length"
+            assert np.all(np.diff(mask, axis=1)) > 0, "Intervals in mask must have a positive length"
             for interval in mask:
                 inaccessible[interval[0]:interval[1]] = True
 
@@ -99,11 +99,11 @@ class ObservedTrioRates:
 
         # check that sample times are all the same within a sample set
         sample_times = [list({ts.get_time(i) for i in s}) for s in self.sample_sets]
-        assert all([len(t) == 1 for t in sample_times])
+        assert all([len(t) == 1 for t in sample_times]), "Sample times incorrectly parsed (bug)"
         self.population_times = [t[0] for t in sample_times]
 
         # check that time breaks include sample times
-        assert all([i in time_breaks for i in self.population_times])
+        assert all([i in time_breaks for i in self.population_times]), "Time breaks must include sample ages"
         self.time_breaks = time_breaks
 
         # calculate tree span, using accessibility mask if provided
@@ -131,8 +131,9 @@ class ObservedTrioRates:
             sum(tree_span[np.where(tree_block == i)]) for i in range(bootstrap_blocks)
         ])
 
-        assert self.sequence_length == np.sum(~inaccessible)
-        assert np.isclose(np.sum(block_span), 1.0)
+        # will trigger if there are empty trees not included in the mask
+        # assert self.sequence_length == np.sum(~inaccessible), "Mask parsed incorrectly (bug)" 
+        assert np.isclose(np.sum(block_span), 1.0), "Block size calculated incorrectly (bug)"
         if not self.sequence_length > 0:
             raise ValueError(
                 "The accessible sequence length is zero; cannot calculate rates"
