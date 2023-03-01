@@ -96,7 +96,13 @@ coaldecoder <- function(
   #TODO: check input types for rates, bootstrap precision
   stopifnot(all(dim(bootstrap_precision) == dim(coalescence_rates)))
   stopifnot(all(rownames(bootstrap_precision) == rownames(coalescence_rates)))
-  stopifnot(all(emission_names %in% rownames(coalescence_rates)))
+  if (!all(emission_names %in% rownames(coalescence_rates))) {
+    not_found <- emission_names[!(emission_names %in% rownames(coalescence_rates))]
+    stop(paste0(
+      "Expected but did not find rows named\n", paste(not_found, collapse=", "), 
+      "\nin rates array -- check population ordering in parameter arrays."
+    ))
+  }
   rate_mapping <- match(emission_names, rownames(coalescence_rates))
   coalescence_rates <- coalescence_rates[rate_mapping,,drop=FALSE]
   bootstrap_precision <- bootstrap_precision[rate_mapping,,drop=FALSE]
@@ -215,6 +221,7 @@ coaldecoder <- function(
   colnames(fitted_rates) <- colnames(coalescence_rates)
 
   list(demographic_parameters=demographic_parameters,
+       admixture_coefficients=admixture_coefficients,
        std_error=std_error,
        loglikelihood=-fit$value,
        optimizer=fit,
