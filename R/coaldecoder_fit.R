@@ -41,6 +41,61 @@ smoothed_bootstrap_precision <- function(mean, sd, denominator=NULL, method=c('n
   precision
 }
 
+pairwise_coalescence_rates <- function(
+  demographic_parameters,
+  admixture_coefficients,
+  epoch_durations
+) {
+  # convoluted way to go about this ...
+
+  dummy_migr <- array(0, dim(demographic_parameters) + c(1,1,0))
+  dummy_migr[1:nrow(demographic_parameters), 1:ncol(demographic_parameters), ] <-
+    demographic_parameters
+  dummy_migr[nrow(dummy_migr), ncol(dummy_migr), ] <- Inf
+
+  dummy_admx <- array(0, dim(admixture_coefficients) + c(1,1,0))
+  dummy_admx[1:nrow(admixture_coefficients), 1:ncol(admixture_coefficients), ] <-
+    admixture_coefficients
+  dummy_admx[nrow(dummy_admx), ncol(dummy_admx), ] <- 1
+
+  decoder <- CoalescentDecoder$new(nrow(dummy_admx), epoch_durations, TRUE)
+  rate_names <- decoder$emission_states(c(rownames(demographic_parameters), "DUMMY"))
+  state <- decoder$initial_state_vectors()
+  decoder_fit <- decoder$expected_rates(state, dummy_migr, dummy_admx)
+  fitted_rates <- decoder_fit$y
+  rownames(fitted_rates) <- rate_names
+
+  pairwise <- 
+    !grepl("((DUMMY,", rate_names, fixed=TRUE) & 
+      !grepl(",DUMMY),", rate_names, fixed=TRUE) &
+        grepl("),DUMMY)", rate_names, fixed=TRUE) &
+          grepl("t1::", rate_names, fixed=TRUE)
+
+  fitted_rates <- fitted_rates[pairwise,]
+
+  epoch_start <- cumsum(c(0, epoch_durations[1:length(epoch_durations)-1]))
+  rownames(fitted_rates) <- sub("t1::((", "", rownames(fitted_rates), fixed=TRUE)
+  rownames(fitted_rates) <- sub("),DUMMY)", "", rownames(fitted_rates), fixed=TRUE)
+
+  pop_labels <- Reduce(rbind, strsplit(rownames(fitted_rates), split=","))
+  out <- data.frame()
+  for(pop in rownames(demographic_parameters)){
+     target_a <- grepl(pop, pop_labels[,1])
+     target_b <- grepl(pop, pop_labels[,2])
+     tmp <- .melt(fitted_rates[target_a | target_b, ])
+     colnames(tmp) <- c("Other", "Time", "Rate")
+     pl <- pop_labels[target_a | target_b, ]
+     other <- ifelse(pl[,1] == pop, pl[,2], pl[,1])
+     tmp$Other <- as.character(other[tmp[,1]])
+     tmp$Time <- epoch_start[tmp[,2]]
+     tmp$Pop <- pop
+     out <- rbind(out, tmp)
+  }
+
+  return(out)
+  #return(fitted_rates)
+}
+
 coaldecoder <- function(
   coalescence_rates,
   bootstrap_precision,
@@ -222,6 +277,7 @@ coaldecoder <- function(
 
   list(demographic_parameters=demographic_parameters,
        admixture_coefficients=admixture_coefficients,
+       epoch_durations=epoch_durations,
        std_error=std_error,
        loglikelihood=-fit$value,
        optimizer=fit,

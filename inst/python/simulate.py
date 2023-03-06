@@ -28,7 +28,7 @@ import gzip
 
 # TODO: add option not to concatenate but to write out separate ts
 
-def msprime_simulate (sample_sizes, pop_times, pop_names, migr_mat, admix_mat, epoch_dur, length, recombination_rate, num_chromosomes, outfile, save, mutation_rate = 0.0, random_seed = None):
+def msprime_simulate (sample_sizes, pop_times, pop_names, migr_mat, admix_mat, epoch_dur, length, recombination_rate, num_chromosomes, outfile, save, mutation_rate = 0.0, random_seed = None, merge = False):
 
     assert save in ["tree_sequence", "msprime_inputs"]
 
@@ -114,29 +114,31 @@ def msprime_simulate (sample_sizes, pop_times, pop_names, migr_mat, admix_mat, e
           num_replicates=num_chromosomes,
           random_seed=random_seed,
         )
-        
-        # initialize
-        ts = next(ts_gen)
-        tables = ts.dump_tables().asdict()
-        nodes = tables['nodes']
-        edges = tables['edges']
-        seq_offset = tables['sequence_length']
-        node_offset = len(nodes['flags'])
 
-        chromosome = 1
-        if mutation_rate > 0.0:
-            vcf_file = gzip.open(outfile + ".chr" + str(chromosome) + ".vcf.gz", "wt")
-            ts.write_vcf(
-                vcf_file, 
-                ploidy=1, 
-                individual_names=sample_names, 
-                contig_id="chr" + str(chromosome)
-            )
-            vcf_file.close()
-        
-        # extract tables and offset values
-        for ts in ts_gen:
-            chromosome += 1
+        if not merge:
+            chromosome = 0
+            for ts in ts_gen:
+                chromosome += 1
+                if mutation_rate > 0.0:
+                    vcf_file = gzip.open(outfile + "_chr" + str(chromosome) + ".vcf.gz", "wt")
+                    ts.write_vcf(
+                        vcf_file, 
+                        ploidy=1, 
+                        individual_names=sample_names, 
+                        contig_id="chr" + str(chromosome)
+                    )
+                    vcf_file.close()
+                ts.dump(outfile + "_chr" + str(chromosome) + ".ts")
+        else:
+            # initialize
+            ts = next(ts_gen)
+            tables = ts.dump_tables().asdict()
+            nodes = tables['nodes']
+            edges = tables['edges']
+            seq_offset = tables['sequence_length']
+            node_offset = len(nodes['flags'])
+    
+            chromosome = 1
             if mutation_rate > 0.0:
                 vcf_file = gzip.open(outfile + ".chr" + str(chromosome) + ".vcf.gz", "wt")
                 ts.write_vcf(
@@ -146,43 +148,56 @@ def msprime_simulate (sample_sizes, pop_times, pop_names, migr_mat, admix_mat, e
                     contig_id="chr" + str(chromosome)
                 )
                 vcf_file.close()
-
-            tables = ts.dump_tables().asdict()
-            nodes_flags = tables['nodes']['flags']
-            nodes_time = tables['nodes']['time'][nodes_flags==0]
-            nodes_offset = np.where(nodes_flags==0, node_offset - sum(nodes_flags==1), 0)
-            edges_left = tables['edges']['left'] + seq_offset
-            edges_right = tables['edges']['right'] + seq_offset
-            edges_parent = tables['edges']['parent']
-            edges_parent += nodes_offset[edges_parent]
-            edges_child = tables['edges']['child']
-            edges_child += nodes_offset[edges_child]
             
-            # append to old table
-            nodes['flags'] = np.append(nodes['flags'], [0] * len(nodes_time))
-            nodes['time'] = np.append(nodes['time'], nodes_time)
-            edges['left'] = np.append(edges['left'], edges_left)
-            edges['right'] = np.append(edges['right'], edges_right)
-            edges['parent'] = np.append(edges['parent'], edges_parent)
-            edges['child'] = np.append(edges['child'], edges_child)
+            # extract tables and offset values
+            for ts in ts_gen:
+                chromosome += 1
+                if mutation_rate > 0.0:
+                    vcf_file = gzip.open(outfile + ".chr" + str(chromosome) + ".vcf.gz", "wt")
+                    ts.write_vcf(
+                        vcf_file, 
+                        ploidy=1, 
+                        individual_names=sample_names, 
+                        contig_id="chr" + str(chromosome)
+                    )
+                    vcf_file.close()
+    
+                tables = ts.dump_tables().asdict()
+                nodes_flags = tables['nodes']['flags']
+                nodes_time = tables['nodes']['time'][nodes_flags==0]
+                nodes_offset = np.where(nodes_flags==0, node_offset - sum(nodes_flags==1), 0)
+                edges_left = tables['edges']['left'] + seq_offset
+                edges_right = tables['edges']['right'] + seq_offset
+                edges_parent = tables['edges']['parent']
+                edges_parent += nodes_offset[edges_parent]
+                edges_child = tables['edges']['child']
+                edges_child += nodes_offset[edges_child]
+                
+                # append to old table
+                nodes['flags'] = np.append(nodes['flags'], [0] * len(nodes_time))
+                nodes['time'] = np.append(nodes['time'], nodes_time)
+                edges['left'] = np.append(edges['left'], edges_left)
+                edges['right'] = np.append(edges['right'], edges_right)
+                edges['parent'] = np.append(edges['parent'], edges_parent)
+                edges['child'] = np.append(edges['child'], edges_child)
+                
+                # update offsets
+                seq_offset += tables['sequence_length']
+                node_offset += sum(nodes_flags==0)
             
-            # update offsets
-            seq_offset += tables['sequence_length']
-            node_offset += sum(nodes_flags==0)
-        
-        edge_sort = np.lexsort( (edges['left'], edges['child'], edges['parent'], nodes['time'][edges['parent']]) )
-        tables = tskit.TableCollection(sequence_length=seq_offset)
-        tables.nodes.set_columns(
-            time=nodes['time'],
-            flags=nodes['flags'].astype('uint32'),
-        )
-        tables.edges.set_columns(
-            left=edges['left'][edge_sort],
-            right=edges['right'][edge_sort],
-            parent=edges['parent'][edge_sort],
-            child=edges['child'][edge_sort],
-        )
-        ts = tables.tree_sequence()
-        
-        ts.dump(outfile + ".ts")
-
+            edge_sort = np.lexsort( (edges['left'], edges['child'], edges['parent'], nodes['time'][edges['parent']]) )
+            tables = tskit.TableCollection(sequence_length=seq_offset)
+            tables.nodes.set_columns(
+                time=nodes['time'],
+                flags=nodes['flags'].astype('uint32'),
+            )
+            tables.edges.set_columns(
+                left=edges['left'][edge_sort],
+                right=edges['right'][edge_sort],
+                parent=edges['parent'][edge_sort],
+                child=edges['child'][edge_sort],
+            )
+            ts = tables.tree_sequence()
+            
+            ts.dump(outfile + ".ts")
+    
